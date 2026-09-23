@@ -44,17 +44,11 @@ export class Dispatcher {
       return errorResult('Unauthorized: no Glomopay API secret supplied for this request.');
     }
 
-    let inputs: Record<string, unknown> = { ...(params ?? {}) };
-    if (operation.schema) {
-      const result = operation.schema.safeParse(inputs);
-      if (!result.success) {
-        return errorResult(`Invalid params for "${operationId}": ${JSON.stringify(result.error.issues)}`);
-      }
-      inputs = result.data as Record<string, unknown>;
-    }
-
+    // Route from the raw params; the Glomopay API validates the body. A derived
+    // (openapi2zod) schema under-models some request bodies, so validating and
+    // routing from the parsed result would silently drop valid fields.
     const { method } = operation;
-    const remaining: Record<string, unknown> = { ...inputs };
+    const remaining: Record<string, unknown> = { ...(params ?? {}) };
 
     const url = operation.path.replace(/\{([^}]+)\}/g, (match, key) => {
       if (key in remaining) {

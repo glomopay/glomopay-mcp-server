@@ -1,7 +1,5 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { OpenAPIV3 } from 'openapi-types';
-import { parseOpenApiToZod } from 'openapi2zod';
-import { ZodSchema } from 'zod';
 
 import { THttpMethod } from '@/shared/api-client/api-client.module';
 
@@ -11,7 +9,6 @@ export interface ISpecOperation {
   path: string;
   pathParams: string[];
   queryParams: string[];
-  schema?: ZodSchema;
 }
 
 export type TSpecIndex = ReadonlyMap<string, ISpecOperation>;
@@ -49,17 +46,6 @@ export async function loadSpecIndex(specFilePath: string): Promise<TSpecIndex> {
   const document = (await SwaggerParser.validate(specFilePath)) as OpenAPIV3.Document;
   const { prefix, defaultVersion } = parseServerPath(document);
 
-  const schemasByOperationId = new Map<string, ZodSchema>();
-  try {
-    const zodRecords = parseOpenApiToZod(document);
-    for (const [operationId, schema] of Object.entries(zodRecords)) {
-      schemasByOperationId.set(operationId, schema as ZodSchema);
-    }
-  } catch (error) {
-    console.error('[spec-index] failed to derive validation schemas; continuing without param validation');
-    console.error(error);
-  }
-
   const index = new Map<string, ISpecOperation>();
   for (const [rawPath, pathItem] of Object.entries(document.paths ?? {})) {
     if (!pathItem) continue;
@@ -77,7 +63,6 @@ export async function loadSpecIndex(specFilePath: string): Promise<TSpecIndex> {
         path: normalisePath(rawPath, prefix, defaultVersion),
         pathParams: parameters.filter((p) => p.in === 'path').map((p) => p.name),
         queryParams: parameters.filter((p) => p.in === 'query').map((p) => p.name),
-        schema: schemasByOperationId.get(operation.operationId),
       });
     }
   }
