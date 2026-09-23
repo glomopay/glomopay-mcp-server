@@ -1,109 +1,92 @@
 # Glomopay MCP Server
 
-An MCP (Model Context Protocol) server that enables Large Language Models to interact with Glomopay's external APIs using natural language.
+An MCP (Model Context Protocol) server that exposes the Glomopay external API to
+AI agents. It presents a small, generic tool surface backed by a reviewed
+allowlist, and proxies calls to the Glomopay REST API on behalf of the caller.
 
-## Prerequisites
+The server is built from the published OpenAPI spec at
+`https://docs.glomopay.com/openapi.yaml` — the same contract the public docs are
+generated from. The spec is fetched at **build time** and baked into the image;
+it is never vendored into the repository and never fetched at runtime, so the
+tool surface cannot drift from the documented API.
 
-- Node.js (v18 or higher)
-- pnpm (v10.10.0 or higher)
-- Claude Desktop application
+## Tool surface
 
-## Setup Instructions
+Execution is exposed through two generic tools plus a health check:
 
-### 1. Install Dependencies
+| Tool                 | Methods            | Description                                          |
+| -------------------- | ------------------ | ---------------------------------------------------- |
+| `glomopay_api_read`  | GET                | Run a read-only operation by `operationId`.          |
+| `glomopay_api_write` | POST/PATCH/DELETE  | Run a write operation by `operationId`.              |
+| `healthCheck`        | —                  | Smoke-test tool; returns a greeting.                 |
+
+Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
+`createCustomer`) and a flat `params` object. The dispatcher resolves the
+operation against the spec, enforces the allowlist, splits `params` into path /
+query / body by their real OpenAPI location, injects the caller's credential and
+proxies the request.
+
+Read and write are separate tools so a client can be granted discovery and reads
+without granting writes. Both are gated by the same allowlist
+(`src/features/allowlist/allowlist.config.ts`), which is reviewed config keyed by
+`operationId` — operations added to the spec later are not reachable until a
+human adds them.
+
+## Transport & authentication
+
+The server runs as a **stateless Streamable HTTP** service. The only route is
+`POST /mcp`; `GET`/`DELETE` return `405`.
+
+Every request must carry `Authorization: Bearer <glomopay-secret>`. The bearer is
+the caller's own downstream Glomopay API secret (API-key pass-through): the server
+holds no secret of its own and proxies each call under the caller's key. Credential
+handling is isolated behind a single seam
+(`src/features/auth/credential-resolver.ts`) so it can be replaced by the
+follow-on MCP token flow without touching the tool layer.
+
+## Configuration
+
+Environment variables:
+
+| Variable          | Default            | Description                                              |
+| ----------------- | ------------------ | -------------------------------------------------------- |
+| `API_HOST`        | —                  | API origin, e.g. `https://api.glomopay.com`.            |
+| `PORT`            | `3000`             | Port to listen on.                                       |
+| `HOST`            | `127.0.0.1`        | Bind address.                                            |
+| `OPENAPI_SPEC_URL`| docs.glomopay.com  | Build-time spec source (overridable for CI/testing).    |
+
+`API_HOST` is the origin only — the versioned base path (`/api/v1`, `/api/v2`) is
+resolved per operation from the spec.
+
+## Development
+
+Prerequisites: Node.js 22+, pnpm 10.10.0.
 
 ```bash
 pnpm install
+pnpm build        # tsc + tsc-alias, then fetches the spec into dist/
+API_HOST=https://api.glomopay.com pnpm start
 ```
 
-### 2. Build the Project
+`pnpm build` fails if the spec cannot be fetched or parsed, so a broken or
+unreachable spec never ships.
 
-Compile TypeScript to JavaScript:
+### Smoke test
 
 ```bash
-pnpm build
+curl -s -X POST http://127.0.0.1:3000/mcp \
+  -H 'Authorization: Bearer <your-glomopay-secret>' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-This will generate the compiled code in the `dist/` directory.
+## Deployment
 
-### 3. Start Server
+Deployed as a web service on Render, auto-deploying from `main`. See
+`render.yaml`. `API_HOST` is set in the Render dashboard (`sync: false`).
 
-```bash
-pnpm start
-```
+## Security
 
-### 4. Configure Claude Desktop
-
-#### Step 1: Open/Create Claude Desktop Config
-
-Open the Claude Desktop configuration file:
-
-```bash
-code ~/Library/Application\ Support/Claude/claude_desktop_config.json
-```
-
-If the file doesn't exist, create it with an empty JSON object:
-
-```json
-{
-  "mcpServers": {}
-}
-```
-
-#### Step 2: Add Glomopay MCP Server Configuration
-
-Add the following configuration to the `mcpServers` object:
-
-```json
-{
-  "mcpServers": {
-    "glomopay": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/glomopay-mcp/dist/index.js"],
-      "env": {
-        "API_SECRET_KEY": "your_api_secret_key_here",
-        "API_HOST": "http://localhost:3000"
-      }
-    }
-  }
-}
-```
-
-**Important**: Replace the following values with your own:
-
-- **Path**: Update `/ABSOLUTE/PATH/TO/glomopay-mcp/dist/index.js` with the absolute path to your project's `dist/index.js` file
-- **API_SECRET_KEY**: Use your own Glomopay API secret key (JWT token)
-- **API_HOST**: Set to the URL where your Glomopay Rails application is running
-
-#### Example Configuration
-
-```json
-{
-  "mcpServers": {
-    "glomopay": {
-      "command": "node",
-      "args": ["/Users/aminpainter/Desktop/Glomopay Projects/glomopay-mcp/dist/index.js"],
-      "env": {
-        "API_SECRET_KEY": "eyJhbGciOiJSUzI1NiJ9.eyJlbnYiOiJwcm9kdWN0aW9uIiwiZXhwIjo0OTEzNzE1OTg1LCJpYXQiOjE3NTgwNDIzODUsImF1ZCI6ImxvY2FsaG9zdDozMDAwIiwiaXNzIjoibG9jYWxob3N0OjMwMDAiLCJzdWIiOiJtZXJjaF82ODViYjk5ZUZoUEdBIiwianRpIjoiMjYyZmVjYTItNmYxMC00Njg4LTllMzktM2MzNDRmMTNiNjQ0In0.YmJyLpRNhvJXO8QHFNDKZ0O1LMvGrRgMw7hk4V4ByIA9uEI04IQPlqULacdbmuxaDUboasbMizKSrwvOLqtWSxspojwcwiOk6GV9nCIuAdr-xpL_SCflzHl07EdRXYcM6WPDQqGkZmRK-ZJvnaWxlkv6e4PoIPIhlqEM2DVU8LMe0YdryhBQhtMxc2rwuaGkNEO2_N7hrIOHu0aqPEojYsONJ-kqcBz7i-OneeChdRth0DLz3M0-pRhp-sNxJ-G0DoL9eaQoM0kekh3HtQCZuIn8-ZV_O5XiueEjbPoFnQTp-T0s-MfB0_iXnQxvBj79dUNsL9Mi-d3y3zsKaFpkow",
-        "API_HOST": "http://localhost:3000"
-      }
-    }
-  }
-}
-```
-
-### 5. Restart Claude Desktop
-
-After updating the configuration:
-
-1. Completely quit Claude Desktop (Cmd+Q on macOS)
-2. Reopen Claude Desktop
-
-### 6. Verify Installation
-
-1. Open Claude Desktop
-2. Look for the **filters button** (funnel icon) next to the plus button in the Claude Desktop interface
-3. Click on it to see the list of available MCP servers
-4. Verify that **"Glomopay"** appears in the list
-
-If you see Glomopay in the list, the MCP server is successfully configured and ready to use!
+See [SECURITY.md](./SECURITY.md) for how to report vulnerabilities. Do not commit
+secrets, API keys, or JWTs to this repository.

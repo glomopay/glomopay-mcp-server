@@ -5,14 +5,14 @@
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",
-    "build": "tsc && tsc-alias && copyfiles openapi.json dist",
+    "build": "tsc && tsc-alias && node scripts/fetch-spec.mjs",
     "lint": "eslint --fix",
     "format": "prettier --write",
     "prepare": "husky"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "packageManager": "pnpm@10.10.0",
   "lint-staged": {
     "*.{js,ts}": [
