@@ -1,8 +1,8 @@
 ---
-name: glomopay-integration
+name: glomo-integration
 description: Core conventions for building against the glomo (Glomopay) payments API - authentication, sandbox vs live, amounts and IDs, request_id idempotency, error handling and retry decisions, pagination, rate limits, quotes, and where to find the authoritative spec. Use whenever writing, reviewing or debugging code that calls api.glomopay.com, before reaching for the payin, payout, webhook or testing skills.
 metadata:
-  version: "1.1.0"
+  version: "1.0.0"
 ---
 
 # glomo integration conventions
@@ -21,10 +21,10 @@ When a value comes from a closed set (purpose codes, rails, currencies, countrie
 
 | Building | Skill |
 | --- | --- |
-| Collecting money: payment links, orders + checkout, S2S cards, subscriptions, LRS, refunds | `glomopay-payins` |
-| Sending money: beneficiaries, rails, payouts | `glomopay-payouts` |
-| Reacting to status changes | `glomopay-webhooks` |
-| Proving it works in sandbox before shipping | `glomopay-testing` |
+| Collecting money: payment links, orders + checkout, S2S cards, subscriptions, LRS, refunds | `glomo-payins` |
+| Sending money: beneficiaries, rails, payouts | `glomo-payouts` |
+| Reacting to status changes | `glomo-webhooks` |
+| Proving it works in sandbox before shipping | `glomo-testing` |
 
 ## Authentication and environments
 
@@ -93,7 +93,7 @@ List endpoints use page numbers, not cursors: `page` (default 1) and `per_page` 
 
 ## Rate limits
 
-3,000 requests per minute, counted per source IP at the gateway, so several keys behind one NAT share the budget. No rate-limit headers are returned. On 429 back off exponentially. Polling in a tight loop is the usual cause; use webhooks for status (`glomopay-webhooks`).
+3,000 requests per minute, counted per source IP at the gateway, so several keys behind one NAT share the budget. No rate-limit headers are returned. On 429 back off exponentially. Polling in a tight loop is the usual cause; use webhooks for status (`glomo-webhooks`).
 
 ## Quotes
 
@@ -113,5 +113,5 @@ A quote (`POST /quotes`, `resource: payin` or `payout`) locks the FX rate, fees,
 
 - Every order, payment, refund and payout create sends a deterministic `request_id`, and the duplicate response (409 for payouts, 400 "already exists for this request_id" for the rest) is handled as success-already-happened. Payment link creates are checked before any retry.
 - Final status comes from webhooks or a GET, never from the create response alone. Many objects start `in_progress`, `action_required` or `pending`.
-- The integration has been run end to end in sandbox (`glomopay-testing`).
+- The integration has been run end to end in sandbox (`glomo-testing`).
 - No secret key in client code, logs or error messages.

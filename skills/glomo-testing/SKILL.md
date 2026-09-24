@@ -1,5 +1,5 @@
 ---
-name: glomopay-testing
+name: glomo-testing
 description: How to verify a glomo (Glomopay) integration end to end in sandbox before shipping - getting test keys, the sandbox-only mock endpoints that simulate inbound payments, payout and refund outcomes, beneficiary review, funds availability and settlement; the reserved 6623 amount that forces a sanctions-screening hit; test cards; step-by-step recipes to drive each flow to success and failure; and what sandbox cannot simulate. Use when testing, writing integration tests, or checking that generated glomo API code actually works.
 metadata:
   version: "1.0.0"
@@ -7,7 +7,7 @@ metadata:
 
 # glomo sandbox testing
 
-Do not hand over glomo integration code that has only been reasoned about. Run it against sandbox, read the real responses, and fix anything that disagrees with what you assumed. Read `glomopay-integration` first.
+Do not hand over glomo integration code that has only been reasoned about. Run it against sandbox, read the real responses, and fix anything that disagrees with what you assumed. Read `glomo-integration` first.
 
 ## Sandbox basics
 
@@ -57,7 +57,7 @@ Run each to its terminal state and check both the API response and the webhook y
 
 **Compliance hold**: as payment link paid, with `amount: 6623`. With post-payment screening enabled: expect `payment.success`, then `compliance_status: action_required` and an RFI → respond → expect the compliance status to move on. Without it: expect the payment `action_required` with `SANCTION_HIT`, and check your code routes it to a human instead of retrying.
 
-**Unmatched bank transfer**: `POST /payment/mock {amount, currency, payment_method: "BankTransfer"}` → expect an `action_required` payment → resolve with a quote, a new payin and `connect-payin` (`glomopay-payins`).
+**Unmatched bank transfer**: `POST /payment/mock {amount, currency, payment_method: "BankTransfer"}` → expect an `action_required` payment → resolve with a quote, a new payin and `connect-payin` (`glomo-payins`).
 
 **Funds and settlement**: a paid payment → `mock-funds-available` if not already available → `POST /settlements/mock-trigger` → expect `settlement` webhooks.
 
@@ -80,4 +80,4 @@ Run each to its terminal state and check both the API response and the webhook y
 
 ## Done means
 
-Every flow the integration uses has been driven to success and to at least one failure in sandbox. Webhook handling has been checked for duplicates and out-of-order delivery (`glomopay-webhooks`). The only change for live is swapping test keys for live keys.
+Every flow the integration uses has been driven to success and to at least one failure in sandbox. Webhook handling has been checked for duplicates and out-of-order delivery (`glomo-webhooks`). The only change for live is swapping test keys for live keys.

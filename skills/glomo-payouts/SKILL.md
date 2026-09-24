@@ -1,5 +1,5 @@
 ---
-name: glomopay-payouts
+name: glomo-payouts
 description: How to send money with the glomo (Glomopay) API - creating and approving v2 beneficiaries, choosing a payout rail (UPI, IMPS, NEFT, RTGS, IPP, FTS, SEPA, FPS, NPP, SWIFT), with-quote vs without-quote payouts, payout purpose codes, the payout status lifecycle, which failures to retry, cancellation rules, queued payouts, balances and RFIs. Use when building or debugging anything that pays a beneficiary.
 metadata:
   version: "1.0.0"
@@ -7,7 +7,7 @@ metadata:
 
 # glomo payouts
 
-Read `glomopay-integration` first for auth, amounts, `request_id` and error handling. A payout moves real money, so the rules here are about never paying twice and never retrying a failure that needs a human. Take field shapes from https://docs.glomo.one/openapi.yaml.
+Read `glomo-integration` first for auth, amounts, `request_id` and error handling. A payout moves real money, so the rules here are about never paying twice and never retrying a failure that needs a human. Take field shapes from https://docs.glomo.one/openapi.yaml.
 
 ## Ordered sequence
 

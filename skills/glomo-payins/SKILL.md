@@ -1,5 +1,5 @@
 ---
-name: glomopay-payins
+name: glomo-payins
 description: How to collect money with the glomo (Glomopay) API - choosing between payment links, orders with hosted checkout, server-to-server card payments, bank transfers, subscriptions and LRS remittances; the ordered call sequence for each; picking a purpose code from the closed regulator-defined list; payin, payment, refund and subscription status lifecycles; RFIs and action_required; refunds. Use when building or debugging anything that accepts a payment from a customer.
 metadata:
   version: "1.0.0"
@@ -7,7 +7,7 @@ metadata:
 
 # glomo payins
 
-Read `glomopay-integration` first for auth, amounts, `request_id` and error handling. This skill is about choosing the right flow and knowing what each state means. Take field shapes from https://docs.glomo.one/openapi.yaml.
+Read `glomo-integration` first for auth, amounts, `request_id` and error handling. This skill is about choosing the right flow and knowing what each state means. Take field shapes from https://docs.glomo.one/openapi.yaml.
 
 ## Choose the flow
 
