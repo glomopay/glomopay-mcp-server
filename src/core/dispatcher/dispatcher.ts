@@ -59,6 +59,8 @@ export class Dispatcher {
       return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and require a sandbox credential.`);
     }
 
+    // Route from the raw params; the Glomopay API validates the body. A derived
+    // schema would under-model some request bodies and silently drop valid fields.
     const { method } = operation;
     const remaining: Record<string, unknown> = { ...(params ?? {}) };
 

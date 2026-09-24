@@ -35,6 +35,9 @@ function parseServerPath(document: OpenAPIV3.Document): { prefix: string; defaul
   return { prefix: serverPath, defaultVersion: '' };
 }
 
+// The spec server is /api/v1 but v2 ops are written /v2/...; the service mounts
+// /api/v1 and /api/v2 as siblings. Keep an explicit /vN/ prefix, otherwise
+// prepend the server's default version — naive concatenation would give /api/v1/v2/...
 function normalisePath(rawPath: string, prefix: string, defaultVersion: string): string {
   if (VERSION_SEGMENT.test(rawPath)) return `${prefix}${rawPath}`;
   return defaultVersion ? `${prefix}/${defaultVersion}${rawPath}` : `${prefix}${rawPath}`;

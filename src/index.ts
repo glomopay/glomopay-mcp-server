@@ -16,6 +16,7 @@ import { HealthCheckTool } from './features/health-check/health-check.module';
     baseURL: config.glomopay.apiHost,
   });
 
+  // Spec is fetched at build time (scripts/fetch-spec.mjs) into dist/, never at runtime.
   const specFilePath = path.resolve(__dirname, 'openapi.json');
   const specIndex = await loadSpecIndex(specFilePath);
 
