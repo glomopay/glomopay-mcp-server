@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
 
 import nock from 'nock';
@@ -34,19 +33,53 @@ export async function startTestServer(): Promise<ITestServer> {
   };
 }
 
-export function cassetteExists(name: string): boolean {
-  return existsSync(path.join(nock.back.fixtures as string, name));
+const SENSITIVE_HEADER = /^(set-cookie|cookie|x-request-id|request-id|x-trace-id|x-amzn-.*|x-amz-.*|cf-.*|via|alt-svc|date|etag|x-runtime|server)$/i;
+
+function isDownstream(def: nock.Definition): boolean {
+  return !String(def.scope).includes('127.0.0.1');
+}
+
+function scrubString(value: string): string {
+  return value.replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, 'redacted@example.com');
+}
+
+function scrubBody(value: unknown): unknown {
+  if (typeof value === 'string') return scrubString(value);
+  if (Array.isArray(value)) return value.map(scrubBody);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (/email/i.test(key)) out[key] = 'redacted@example.com';
+      else if (/(^|_)name$/i.test(key)) out[key] = 'REDACTED';
+      else if (/account.*number|iban|\bpan\b/i.test(key)) out[key] = 'REDACTED';
+      else out[key] = scrubBody(val);
+    }
+    return out;
+  }
+  return value;
+}
+
+function scrubDefinition(def: nock.Definition): nock.Definition {
+  const headers = (def as { rawHeaders?: Record<string, string> }).rawHeaders;
+  if (headers && !Array.isArray(headers)) {
+    for (const key of Object.keys(headers)) {
+      if (SENSITIVE_HEADER.test(key)) delete headers[key];
+    }
+  }
+  delete (def as { reqheaders?: unknown }).reqheaders;
+  def.response = scrubBody(def.response) as nock.Definition['response'];
+  return def;
 }
 
 export async function withCassette(name: string, run: () => Promise<void>): Promise<void> {
   const { nockDone } = await nock.back(name, {
-    afterRecord: (defs) =>
-      defs.map((def) => {
-        const headers = (def as { reqheaders?: Record<string, unknown> }).reqheaders;
-        if (headers) delete headers.authorization;
-        return def;
-      }),
+    afterRecord: (defs) => defs.filter(isDownstream).map(scrubDefinition),
   });
+  // nock.back clears the net-connect allow-list. When recording, allow real
+  // downstream calls so they can be captured; when replaying, allow only the
+  // in-process test server (the downstream stays replayed from the cassette).
+  if (isRecording) nock.enableNetConnect();
+  else nock.enableNetConnect('127.0.0.1');
   try {
     await run();
   } finally {

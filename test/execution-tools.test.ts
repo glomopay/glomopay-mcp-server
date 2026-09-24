@@ -1,10 +1,9 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import nock from 'nock';
 
 import {
   API_BASE,
   callTool,
-  cassetteExists,
   isRecording,
   isRefused,
   jwt,
@@ -19,6 +18,9 @@ let server: ITestServer;
 
 beforeAll(async () => {
   server = await startTestServer();
+});
+
+beforeEach(() => {
   if (!isRecording) {
     nock.disableNetConnect();
     nock.enableNetConnect('127.0.0.1');
@@ -186,19 +188,17 @@ describe('sandbox-only write guard', () => {
 });
 
 describe('recorded downstream responses', () => {
-  const cassette = 'get-payout-by-id-missing.json';
-  const runner = isRecording || cassetteExists(cassette) ? it : it.skip;
-
-  runner('returns the real status and error body for a missing payout', async () => {
-    await withCassette(cassette, async () => {
+  it('returns the real status and error body for an unknown payout (404)', async () => {
+    await withCassette('get-payout-by-id-404.json', async () => {
       const response = await callTool(
         server.url,
         'glomopay_api_read',
-        { operationId: 'getPayoutById', params: { id: 'pay_missing000000000000000000' } },
+        { operationId: 'getPayoutById', params: { id: 'payout_000000000000000000000000' } },
         SANDBOX_TOKEN,
       );
       expect(isRefused(response)).toBe(true);
-      expect(resultText(response)).toContain('statusCode');
+      expect(resultText(response)).toContain('"statusCode":404');
+      expect(resultText(response)).toContain('Payout not found');
     });
   });
 });
