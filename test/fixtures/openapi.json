@@ -50,7 +50,11 @@
     "/virtual-accounts": {
       "delete": {
         "operationId": "closeVirtualAccount",
-        "responses": { "204": { "description": "deleted" } }
+        "parameters": [
+          { "name": "payment_type", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "currency", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "closed" } }
       }
     }
   }

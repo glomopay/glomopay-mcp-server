@@ -1,11 +1,19 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
+
+import nock from 'nock';
 
 import { createApp } from '@/core/app/app.module';
 
-export const API_BASE = 'https://sandbox.glomo.test';
+export const API_BASE = process.env.GLOMO_API_HOST ?? 'https://sandbox-api.glomopay.com';
+export const SANDBOX_TOKEN = process.env.GLOMO_SANDBOX_TOKEN ?? jwtToken('sandbox');
+export const isRecording = process.env.NOCK_BACK_MODE === 'record';
 
 const FIXTURE_SPEC = path.resolve(process.cwd(), 'test/fixtures/openapi.json');
+
+nock.back.fixtures = path.resolve(process.cwd(), 'test/fixtures/cassettes');
+nock.back.setMode((process.env.NOCK_BACK_MODE as nock.BackMode) || 'lockdown');
 
 export interface ITestServer {
   url: string;
@@ -26,10 +34,32 @@ export async function startTestServer(): Promise<ITestServer> {
   };
 }
 
-export function jwt(env?: string, extra: Record<string, unknown> = {}): string {
+export function cassetteExists(name: string): boolean {
+  return existsSync(path.join(nock.back.fixtures as string, name));
+}
+
+export async function withCassette(name: string, run: () => Promise<void>): Promise<void> {
+  const { nockDone } = await nock.back(name, {
+    afterRecord: (defs) =>
+      defs.map((def) => {
+        const headers = (def as { reqheaders?: Record<string, unknown> }).reqheaders;
+        if (headers) delete headers.authorization;
+        return def;
+      }),
+  });
+  try {
+    await run();
+  } finally {
+    nockDone();
+  }
+}
+
+export function jwtToken(env?: string, extra: Record<string, unknown> = {}): string {
   const payload = { ...(env ? { env } : {}), ...extra };
   return `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.sig`;
 }
+
+export const jwt = jwtToken;
 
 export interface IToolResponse {
   result?: { content?: { text: string }[]; isError?: boolean };

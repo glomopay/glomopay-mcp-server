@@ -32,3 +32,5 @@ Thumbs.db
 
 # npm package manager files
 package-lock.json # Uncomment if you prefer to ignore this, though it's generally recommended to track it
+# Local sandbox credential for cassette recording (never commit)
+.sandbox-token

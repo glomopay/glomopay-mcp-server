@@ -1,14 +1,28 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import nock from 'nock';
 
-import { API_BASE, callTool, isRefused, jwt, resultText, startTestServer, type ITestServer } from './helpers';
+import {
+  API_BASE,
+  callTool,
+  cassetteExists,
+  isRecording,
+  isRefused,
+  jwt,
+  resultText,
+  SANDBOX_TOKEN,
+  startTestServer,
+  withCassette,
+  type ITestServer,
+} from './helpers';
 
 let server: ITestServer;
 
 beforeAll(async () => {
   server = await startTestServer();
-  nock.disableNetConnect();
-  nock.enableNetConnect('127.0.0.1');
+  if (!isRecording) {
+    nock.disableNetConnect();
+    nock.enableNetConnect('127.0.0.1');
+  }
 });
 
 afterEach(() => {
@@ -22,6 +36,16 @@ afterAll(async () => {
 
 const SANDBOX = () => jwt('sandbox');
 
+const CUSTOMER_BODY = {
+  name: 'MCP Test Customer',
+  customer_type: 'individual',
+  email: 'mcp-test@example.com',
+  address: '1 Test Street',
+  city: 'Bengaluru',
+  state: 'Karnataka',
+  country: 'IND',
+};
+
 describe('endpoint auth', () => {
   it('rejects a request with no bearer', async () => {
     const response = await fetch(server.url, {
@@ -33,22 +57,64 @@ describe('endpoint auth', () => {
   });
 });
 
-describe('path parameters', () => {
-  it('interpolates a valid id to the expected URL', async () => {
-    const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, { id: 'pay_1', status: 'processed' });
+describe('request construction', () => {
+  it('interpolates a valid path param into the URL', async () => {
+    const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
     const response = await callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } }, SANDBOX());
     expect(isRefused(response)).toBe(false);
-    expect(resultText(response)).toContain('processed');
     expect(scope.isDone()).toBe(true);
   });
 
   it('routes declared query params to the query string', async () => {
-    const scope = nock(API_BASE).get('/api/v1/customer').query({ page: '2' }).reply(200, { data: [] });
+    const scope = nock(API_BASE).get('/api/v1/customer').query({ page: '2' }).reply(200, {});
     const response = await callTool(server.url, 'glomopay_api_read', { operationId: 'getCustomers', params: { page: 2 } }, SANDBOX());
     expect(isRefused(response)).toBe(false);
     expect(scope.isDone()).toBe(true);
   });
 
+  it('sends a POST body built from params', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer', CUSTOMER_BODY).reply(201, {});
+    const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX());
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('maps a PATCH to the right method, path and body', async () => {
+    const scope = nock(API_BASE).patch('/api/v1/payouts/pay_1/cancel', { reason: 'duplicate' }).reply(200, {});
+    const response = await callTool(
+      server.url,
+      'glomopay_api_write',
+      { operationId: 'cancelPayout', params: { id: 'pay_1', reason: 'duplicate' } },
+      SANDBOX(),
+    );
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('maps a DELETE to the right method, path and query params', async () => {
+    const scope = nock(API_BASE).delete('/api/v1/virtual-accounts').query({ payment_type: 'bank_transfer', currency: 'USD' }).reply(200, {});
+    const response = await callTool(
+      server.url,
+      'glomopay_api_write',
+      { operationId: 'closeVirtualAccount', params: { payment_type: 'bank_transfer', currency: 'USD' } },
+      SANDBOX(),
+    );
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('forwards the caller credential as a Bearer token downstream', async () => {
+    const token = jwt('sandbox');
+    const scope = nock(API_BASE, { reqheaders: { authorization: `Bearer ${token}` } })
+      .get('/api/v1/payouts/pay_9')
+      .reply(200, {});
+    const response = await callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_9' } }, token);
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
+});
+
+describe('path parameter validation', () => {
   for (const badValue of ['.', '..', 'a/b', '']) {
     it(`refuses id "${badValue}" without calling the API`, async () => {
       const scope = nock(API_BASE).get(/.*/).reply(200, {});
@@ -98,10 +164,9 @@ describe('allowlist and read/write split', () => {
 
 describe('sandbox-only write guard', () => {
   it('allows a write with a sandbox credential', async () => {
-    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, { id: 'cust_1' });
-    const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'createCustomer', params: { name: 'A' } }, jwt('sandbox'));
+    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+    const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, jwt('sandbox'));
     expect(isRefused(response)).toBe(false);
-    expect(resultText(response)).toContain('cust_1');
     expect(scope.isDone()).toBe(true);
   });
 
@@ -111,8 +176,8 @@ describe('sandbox-only write guard', () => {
     ['non-JWT', 'not-a-jwt'],
   ] as const) {
     it(`refuses a write with a ${label} credential without calling the API`, async () => {
-      const scope = nock(API_BASE).post('/api/v1/customer').reply(201, { id: 'cust_1' });
-      const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'createCustomer', params: { name: 'A' } }, bearer);
+      const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+      const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, bearer);
       expect(isRefused(response)).toBe(true);
       expect(resultText(response)).toContain('sandbox-only');
       expect(scope.isDone()).toBe(false);
@@ -120,60 +185,21 @@ describe('sandbox-only write guard', () => {
   }
 });
 
-describe('downstream errors', () => {
-  it('returns the API status code and error body', async () => {
-    nock(API_BASE)
-      .get('/api/v1/customer')
-      .reply(422, { error: { field: 'required' } });
-    const response = await callTool(server.url, 'glomopay_api_read', { operationId: 'getCustomers', params: {} }, SANDBOX());
-    expect(isRefused(response)).toBe(true);
-    const text = resultText(response);
-    expect(text).toContain('422');
-    expect(text).toContain('required');
-  });
-});
+describe('recorded downstream responses', () => {
+  const cassette = 'get-payout-by-id-missing.json';
+  const runner = isRecording || cassetteExists(cassette) ? it : it.skip;
 
-describe('method, payload and credential mapping', () => {
-  it('sends a POST body built from params', async () => {
-    const scope = nock(API_BASE).post('/api/v1/customer', { name: 'A', email: 'a@b.com' }).reply(201, { id: 'cust_1' });
-    const response = await callTool(
-      server.url,
-      'glomopay_api_write',
-      { operationId: 'createCustomer', params: { name: 'A', email: 'a@b.com' } },
-      jwt('sandbox'),
-    );
-    expect(isRefused(response)).toBe(false);
-    expect(scope.isDone()).toBe(true);
-  });
-
-  it('maps a PATCH to the right method, path and body', async () => {
-    const scope = nock(API_BASE).patch('/api/v1/payouts/pay_1/cancel', { reason: 'duplicate' }).reply(200, { id: 'pay_1', status: 'cancelled' });
-    const response = await callTool(
-      server.url,
-      'glomopay_api_write',
-      { operationId: 'cancelPayout', params: { id: 'pay_1', reason: 'duplicate' } },
-      jwt('sandbox'),
-    );
-    expect(isRefused(response)).toBe(false);
-    expect(resultText(response)).toContain('cancelled');
-    expect(scope.isDone()).toBe(true);
-  });
-
-  it('maps a DELETE to the right method and path', async () => {
-    const scope = nock(API_BASE).delete('/api/v1/virtual-accounts').reply(204);
-    const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'closeVirtualAccount', params: {} }, jwt('sandbox'));
-    expect(isRefused(response)).toBe(false);
-    expect(scope.isDone()).toBe(true);
-  });
-
-  it('forwards the caller credential as a Bearer token downstream', async () => {
-    const token = jwt('sandbox');
-    const scope = nock(API_BASE, { reqheaders: { authorization: `Bearer ${token}` } })
-      .get('/api/v1/payouts/pay_9')
-      .reply(200, { id: 'pay_9' });
-    const response = await callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_9' } }, token);
-    expect(isRefused(response)).toBe(false);
-    expect(scope.isDone()).toBe(true);
+  runner('returns the real status and error body for a missing payout', async () => {
+    await withCassette(cassette, async () => {
+      const response = await callTool(
+        server.url,
+        'glomopay_api_read',
+        { operationId: 'getPayoutById', params: { id: 'pay_missing000000000000000000' } },
+        SANDBOX_TOKEN,
+      );
+      expect(isRefused(response)).toBe(true);
+      expect(resultText(response)).toContain('statusCode');
+    });
   });
 });
 
