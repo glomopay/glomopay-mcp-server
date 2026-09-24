@@ -33,6 +33,19 @@
         "operationId": "onboardMerchant",
         "responses": { "201": { "description": "created" } }
       }
+    },
+    "/v2/beneficiaries": {
+      "post": {
+        "operationId": "createBeneficiaryV2",
+        "responses": { "201": { "description": "created" } }
+      }
+    },
+    "/v2/beneficiaries/{id}": {
+      "get": {
+        "operationId": "getBeneficiaryByIdV2",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "ok" } }
+      }
     }
   }
 }
