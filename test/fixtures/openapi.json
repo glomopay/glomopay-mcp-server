@@ -1,0 +1,38 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Glomopay test fixture", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.glomo.one/api/v1" }],
+  "paths": {
+    "/customer": {
+      "get": {
+        "operationId": "getCustomers",
+        "parameters": [{ "name": "page", "in": "query", "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "ok" } }
+      },
+      "post": {
+        "operationId": "createCustomer",
+        "responses": { "201": { "description": "created" } }
+      }
+    },
+    "/payouts/{id}": {
+      "get": {
+        "operationId": "getPayoutById",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/payouts/{id}/cancel": {
+      "patch": {
+        "operationId": "cancelPayout",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/platform/merchants": {
+      "post": {
+        "operationId": "onboardMerchant",
+        "responses": { "201": { "description": "created" } }
+      }
+    }
+  }
+}
