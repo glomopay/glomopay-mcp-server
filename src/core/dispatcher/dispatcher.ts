@@ -55,8 +55,8 @@ export class Dispatcher {
       return errorResult('Unauthorized: no Glomopay API secret supplied for this request.');
     }
 
-    if (operation.method !== 'GET' && tokenEnvClaim(secret) === 'production') {
-      return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and will not run against a production credential yet.`);
+    if (operation.method !== 'GET' && tokenEnvClaim(secret) !== 'sandbox') {
+      return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and require a sandbox credential.`);
     }
 
     const { method } = operation;
