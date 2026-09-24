@@ -8,7 +8,7 @@ allowlist and proxies calls to the Glomopay REST API under the caller's own
 credential.
 
 The server is built from the published OpenAPI spec
-(`https://docs.glomopay.com/openapi.yaml`) — the same contract the public docs
+(`https://docs.glomopay.com/openapi.json`) — the same contract the public docs
 are generated from. The spec is fetched at **build time** and baked into `dist/`;
 it is never vendored into the repo and never fetched at runtime, so the tool
 surface cannot drift from the documented API.
@@ -24,10 +24,10 @@ Transfers, LRS remittance).
 - **Transport**: Streamable HTTP (Express 5), stateless
 - **Key Dependencies**:
   - `@modelcontextprotocol/sdk`: MCP protocol
-  - `@apidevtools/swagger-parser` + `openapi2zod`: spec parsing / schema derivation
+  - `@apidevtools/swagger-parser`: OpenAPI spec parsing / validation
   - `express`: HTTP transport
   - `axios`: downstream HTTP client
-  - `zod`: schema validation
+  - `zod`: tool input schemas
 
 ## Project Structure
 
@@ -68,8 +68,9 @@ Each folder exposes a `*.module.ts` barrel; import through it, not the impl file
    `{ operationId, params }` and calls the **dispatcher**.
 3. `Dispatcher.dispatch` (`core/dispatcher/dispatcher.ts`): resolves the op in
    the spec index → checks the **allowlist** → checks the tool's permitted HTTP
-   methods → validates `params` → splits into path/query/body by OpenAPI location
-   → `resolveCredential(extra)` → axios request → JSON result.
+   methods → refuses production credentials on writes → validates path params →
+   splits into path/query/body by OpenAPI location → `resolveCredential(extra)`
+   → axios request → JSON result (or the API's status + error body).
 
 ### The generic tool surface
 
@@ -85,8 +86,8 @@ api_details, implementation_planner, sample_request) are separate tickets.
 
 ### Spec index & versioned URLs (`core/dispatcher/spec-index.ts`)
 
-Indexes every operation by `operationId` with method, param locations, and a
-zod validation schema. **URL construction is version-aware**: the spec's server
+Indexes every operation by `operationId` with method and param locations.
+**URL construction is version-aware**: the spec's server
 is `/api/v1` but v2 operations are written `/v2/...`, while the real service
 mounts `/api/v1` and `/api/v2` as siblings. So the base URL is the origin only
 (`API_HOST`) and each op's full versioned path is resolved here — explicit

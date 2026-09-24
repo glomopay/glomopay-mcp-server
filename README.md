@@ -5,7 +5,7 @@ AI agents. It presents a small, generic tool surface backed by a reviewed
 allowlist, and proxies calls to the Glomopay REST API on behalf of the caller.
 
 The server is built from the published OpenAPI spec at
-`https://docs.glomopay.com/openapi.yaml` — the same contract the public docs are
+`https://docs.glomopay.com/openapi.json` — the same contract the public docs are
 generated from. The spec is fetched at **build time** and baked into the image;
 it is never vendored into the repository and never fetched at runtime, so the
 tool surface cannot drift from the documented API.

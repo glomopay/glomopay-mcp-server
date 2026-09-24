@@ -1,13 +1,24 @@
 import { CallToolResult } from '@modelcontextprotocol/sdk/types';
 
 import { TToolExtra } from '@/shared/tool/tool.module';
-import { ApiClient, THttpMethod } from '@/shared/api-client/api-client.module';
+import { ApiClient, ApiError, THttpMethod } from '@/shared/api-client/api-client.module';
 import { resolveCredential } from '@/features/auth/auth.module';
 
 import { TSpecIndex } from './spec-index';
 
 function errorResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }], isError: true };
+}
+
+function tokenEnvClaim(token: string): string | undefined {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return undefined;
+    const json = Buffer.from(payload, 'base64url').toString('utf8');
+    return (JSON.parse(json) as { env?: string }).env;
+  } catch {
+    return undefined;
+  }
 }
 
 export class Dispatcher {
@@ -25,7 +36,7 @@ export class Dispatcher {
   ): Promise<CallToolResult> {
     const operation = this.specIndex.get(operationId);
     if (!operation) {
-      return errorResult(`Unknown operationId "${operationId}". Use the Glomopay API discovery tools to find a valid operation.`);
+      return errorResult(`Unknown operationId "${operationId}": not a documented Glomopay operation.`);
     }
 
     if (!this.allowlist.has(operationId)) {
@@ -44,20 +55,33 @@ export class Dispatcher {
       return errorResult('Unauthorized: no Glomopay API secret supplied for this request.');
     }
 
-    // Route from the raw params; the Glomopay API validates the body. A derived
-    // (openapi2zod) schema under-models some request bodies, so validating and
-    // routing from the parsed result would silently drop valid fields.
+    if (operation.method !== 'GET' && tokenEnvClaim(secret) === 'production') {
+      return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and will not run against a production credential yet.`);
+    }
+
     const { method } = operation;
     const remaining: Record<string, unknown> = { ...(params ?? {}) };
 
-    const url = operation.path.replace(/\{([^}]+)\}/g, (match, key) => {
-      if (key in remaining) {
-        const value = String(remaining[key]);
-        delete remaining[key];
-        return encodeURIComponent(value);
+    for (const name of operation.pathParams) {
+      const value = remaining[name];
+      if (typeof value !== 'string' || value.trim() === '') {
+        return errorResult(`Missing or invalid path parameter "${name}" for "${operationId}": expected a non-empty string.`);
       }
-      return match;
+      if (value === '.' || value === '..' || value.includes('/')) {
+        return errorResult(`Invalid path parameter "${name}" for "${operationId}": must be a single safe path segment.`);
+      }
+    }
+
+    const url = operation.path.replace(/\{([^}]+)\}/g, (match, key) => {
+      if (!(key in remaining)) return match;
+      const value = String(remaining[key]);
+      delete remaining[key];
+      return encodeURIComponent(value);
     });
+
+    if (/\{[^}]+\}/.test(url)) {
+      return errorResult(`Unresolved path parameters for "${operationId}".`);
+    }
 
     const query: Record<string, unknown> = {};
     for (const name of operation.queryParams) {
@@ -67,7 +91,6 @@ export class Dispatcher {
       }
     }
 
-    // GET/DELETE have no body, so any remainder belongs in the query string.
     const isBodyless = method === 'GET' || method === 'DELETE';
     if (isBodyless) {
       Object.assign(query, remaining);
@@ -84,6 +107,9 @@ export class Dispatcher {
       const response = await this.apiClient.request(method, url, body, undefined, requestConfig);
       return { content: [{ type: 'text', text: JSON.stringify(response) }] };
     } catch (error) {
+      if (error instanceof ApiError) {
+        return errorResult(JSON.stringify({ operationId, statusCode: error.statusCode, message: error.message, error: error.data }));
+      }
       const message = error instanceof Error ? error.message : String(error);
       return errorResult(`Glomopay API call failed for "${operationId}": ${message}`);
     }

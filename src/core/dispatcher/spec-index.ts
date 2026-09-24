@@ -13,7 +13,7 @@ export interface ISpecOperation {
 
 export type TSpecIndex = ReadonlyMap<string, ISpecOperation>;
 
-const HTTP_METHODS: THttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+const HTTP_METHODS: THttpMethod[] = ['GET', 'POST', 'PATCH', 'DELETE'];
 const VERSION_SEGMENT = /^\/v\d+\//;
 
 function parseServerPath(document: OpenAPIV3.Document): { prefix: string; defaultVersion: string } {
@@ -35,8 +35,6 @@ function parseServerPath(document: OpenAPIV3.Document): { prefix: string; defaul
   return { prefix: serverPath, defaultVersion: '' };
 }
 
-// Spec server is /api/v1 but v2 ops are written /v2/...; the service mounts v1 and v2
-// as siblings. Keep an explicit /vN/ prefix, otherwise prepend the server's default.
 function normalisePath(rawPath: string, prefix: string, defaultVersion: string): string {
   if (VERSION_SEGMENT.test(rawPath)) return `${prefix}${rawPath}`;
   return defaultVersion ? `${prefix}/${defaultVersion}${rawPath}` : `${prefix}${rawPath}`;
@@ -54,7 +52,6 @@ export async function loadSpecIndex(specFilePath: string): Promise<TSpecIndex> {
       const operation = pathItem[method.toLowerCase() as OpenAPIV3.HttpMethods];
       if (!operation || !operation.operationId) continue;
 
-      // Parameters may be declared on the path item (shared) or the operation.
       const parameters = [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])] as OpenAPIV3.ParameterObject[];
 
       index.set(operation.operationId, {

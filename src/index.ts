@@ -12,25 +12,25 @@ import { HealthCheckTool } from './features/health-check/health-check.module';
 (async () => {
   const mcpServer = MCPServer.getInstance();
 
-  // Origin only; the versioned base path is resolved per operation (see spec-index).
   const apiClient = new ApiClient({
     baseURL: config.glomopay.apiHost,
   });
 
-  // Spec is fetched at build time (scripts/fetch-spec.mjs) into dist/, never at runtime.
   const specFilePath = path.resolve(__dirname, 'openapi.json');
   const specIndex = await loadSpecIndex(specFilePath);
 
-  for (const operationId of executionAllowlist) {
-    if (!specIndex.has(operationId)) {
-      console.error(`[allowlist] operationId "${operationId}" is not present in the fetched spec`);
-    }
-  }
+  const allowedOperationIds = [...executionAllowlist].filter((operationId) => {
+    if (specIndex.has(operationId)) return true;
+    console.error(`[allowlist] operationId "${operationId}" is not present in the fetched spec`);
+    return false;
+  });
+  const readOperationIds = allowedOperationIds.filter((operationId) => specIndex.get(operationId)!.method === 'GET');
+  const writeOperationIds = allowedOperationIds.filter((operationId) => specIndex.get(operationId)!.method !== 'GET');
 
   const dispatcher = new Dispatcher(specIndex, executionAllowlist, apiClient);
 
-  mcpServer.registerTool(new ApiReadTool(dispatcher));
-  mcpServer.registerTool(new ApiWriteTool(dispatcher));
+  mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
+  mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
   mcpServer.registerTool(new HealthCheckTool());
 
   const app = createHttpServer(mcpServer);

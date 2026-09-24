@@ -15,7 +15,6 @@ export const EXECUTION_ALLOWLIST: readonly string[] = [
   'createCustomerBankAccount',
   'getCustomerBankAccounts',
 
-  'createDocument',
   'getDocuments',
   'getDocumentById',
 
@@ -50,7 +49,6 @@ export const EXECUTION_ALLOWLIST: readonly string[] = [
   'getPayouts',
   'getPayoutById',
   'cancelPayout',
-  'updateRfiPayout',
   'mockUpdatePayoutStatus',
 
   'createPrice',
@@ -94,12 +92,7 @@ export const EXECUTION_ALLOWLIST: readonly string[] = [
 
   'createInternalTransfer',
 
-  'onboardMerchant',
   'getMerchant',
-  'updateMerchant',
-  'updateMerchantStatus',
-
-  'rotateApiKey',
 ];
 
 export const executionAllowlist: ReadonlySet<string> = new Set(EXECUTION_ALLOWLIST);

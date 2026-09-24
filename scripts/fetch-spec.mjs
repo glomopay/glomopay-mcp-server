@@ -1,26 +1,32 @@
-// Build-time fetch of the published Glomopay OpenAPI spec into dist/. The spec is
-// never vendored and never fetched at runtime, so the tool surface cannot drift
-// from the documented API. A failed/invalid fetch fails the build.
-
+import SwaggerParser from '@apidevtools/swagger-parser';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const SPEC_URL = process.env.OPENAPI_SPEC_URL || 'https://docs.glomopay.com/openapi.json';
 const OUT_PATH = path.resolve(import.meta.dirname, '..', 'dist', 'openapi.json');
+const FETCH_TIMEOUT_MS = 15000;
 
 async function main() {
   console.error(`[fetch-spec] fetching ${SPEC_URL}`);
 
-  const response = await fetch(SPEC_URL);
+  const response = await fetch(SPEC_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!response.ok) {
     throw new Error(`[fetch-spec] fetch failed: ${response.status} ${response.statusText}`);
   }
 
+  const text = await response.text();
+
   let spec;
   try {
-    spec = JSON.parse(await response.text());
+    spec = JSON.parse(text);
   } catch (error) {
     throw new Error(`[fetch-spec] response is not valid JSON: ${error.message}`);
+  }
+
+  try {
+    await SwaggerParser.validate(JSON.parse(text));
+  } catch (error) {
+    throw new Error(`[fetch-spec] spec failed OpenAPI validation: ${error.message}`);
   }
 
   const operationCount = countOperations(spec);
