@@ -2,7 +2,7 @@ import SwaggerParser from '@apidevtools/swagger-parser';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const SPEC_URL = process.env.OPENAPI_SPEC_URL || 'https://docs.glomopay.com/openapi.json';
+const SPEC_URL = process.env.OPENAPI_SPEC_URL || 'https://docs.glomo.one/openapi.json';
 const OUT_PATH = path.resolve(import.meta.dirname, '..', 'dist', 'openapi.json');
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -24,7 +24,7 @@ async function main() {
   }
 
   try {
-    await SwaggerParser.validate(JSON.parse(text));
+    await SwaggerParser.validate(structuredClone(spec));
   } catch (error) {
     throw new Error(`[fetch-spec] spec failed OpenAPI validation: ${error.message}`);
   }

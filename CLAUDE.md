@@ -8,7 +8,7 @@ allowlist and proxies calls to the Glomopay REST API under the caller's own
 credential.
 
 The server is built from the published OpenAPI spec
-(`https://docs.glomopay.com/openapi.json`) — the same contract the public docs
+(`https://docs.glomo.one/openapi.json`) — the same contract the public docs
 are generated from. The spec is fetched at **build time** and baked into `dist/`;
 it is never vendored into the repo and never fetched at runtime, so the tool
 surface cannot drift from the documented API.

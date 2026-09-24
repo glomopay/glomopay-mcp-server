@@ -5,7 +5,7 @@ AI agents. It presents a small, generic tool surface backed by a reviewed
 allowlist, and proxies calls to the Glomopay REST API on behalf of the caller.
 
 The server is built from the published OpenAPI spec at
-`https://docs.glomopay.com/openapi.json` — the same contract the public docs are
+`https://docs.glomo.one/openapi.json` — the same contract the public docs are
 generated from. The spec is fetched at **build time** and baked into the image;
 it is never vendored into the repository and never fetched at runtime, so the
 tool surface cannot drift from the documented API.
@@ -53,7 +53,7 @@ Environment variables:
 | `API_HOST`        | —                  | API origin, e.g. `https://api.glomopay.com`.            |
 | `PORT`            | `3000`             | Port to listen on.                                       |
 | `HOST`            | `127.0.0.1`        | Bind address.                                            |
-| `OPENAPI_SPEC_URL`| docs.glomopay.com  | Build-time spec source (overridable for CI/testing).    |
+| `OPENAPI_SPEC_URL`| docs.glomo.one     | Build-time spec source (overridable for CI/testing).    |
 
 `API_HOST` is the origin only — the versioned base path (`/api/v1`, `/api/v2`) is
 resolved per operation from the spec.

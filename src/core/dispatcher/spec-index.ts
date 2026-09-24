@@ -53,12 +53,13 @@ export async function loadSpecIndex(specFilePath: string): Promise<TSpecIndex> {
       if (!operation || !operation.operationId) continue;
 
       const parameters = [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])] as OpenAPIV3.ParameterObject[];
+      const fullPath = normalisePath(rawPath, prefix, defaultVersion);
 
       index.set(operation.operationId, {
         operationId: operation.operationId,
         method,
-        path: normalisePath(rawPath, prefix, defaultVersion),
-        pathParams: parameters.filter((p) => p.in === 'path').map((p) => p.name),
+        path: fullPath,
+        pathParams: [...fullPath.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]),
         queryParams: parameters.filter((p) => p.in === 'query').map((p) => p.name),
       });
     }
