@@ -6,17 +6,8 @@ import { BaseTool } from '@/shared/tool/tool.module';
 export class MCPServer {
   private static SERVER_NAME = 'glomopay';
   private static SERVER_VERSION = '1.0.0';
-  private static instance: MCPServer;
 
   private tools: BaseTool[] = [];
-
-  private constructor() {}
-
-  static getInstance() {
-    if (!MCPServer.instance) MCPServer.instance = new MCPServer();
-
-    return MCPServer.instance;
-  }
 
   registerTool(tool: BaseTool) {
     this.tools.push(tool);
