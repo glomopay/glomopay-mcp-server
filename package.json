@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",
-    "build": "tsc && tsc-alias && node scripts/fetch-spec.mjs",
+    "build": "tsc && tsc-alias && node scripts/fetch-spec.mjs && node scripts/fetch-docs.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "lint": "eslint --fix",
