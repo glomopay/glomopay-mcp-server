@@ -86,7 +86,7 @@ Notes where the docs and the wire differ:
 | Any successful payment | Money is usable when `funds_available` is true. A payment whose funds were not held arrives as one `payment.success` with `funds_available: true`. A payment whose funds were held (LRS, compliance screening) gets `success` first and `payment.funds_available` when they are released. | `payment.compliance_action_required`: settlement held until the RFI is answered |
 | Refund | `refund.success` | `refund.failed`, `refund.action_required`; `utr.updated` adds the bank reference |
 | Beneficiary | `beneficiary.active`, before creating payouts | `beneficiary.rejected` |
-| Payout | `payout.success` | `payout.failed` / `cancelled` (read `error_code`), `action_required` (RFI), `queued`, `pending_approval` |
+| Payout | `payout.success` | `payout.failed` / `cancelled` (read `error_code`), `action_required` (RFI, answered in the dashboard), `queued`, `pending_approval` |
 | Subscription | `subscription.active`, then `payment.*` per charge | `halted`, `failed`, `cancelled`, `payment_method.updated` |
 
 The browser-side checkout result (SDK event or redirect with `status`) is a UX signal. The webhook, or a server-side `GET`, is the source of truth.

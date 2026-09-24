@@ -43,7 +43,7 @@ Per-rail limits and details: https://docs.glomo.one/payout/rails.md. Only use ra
 
 - A beneficiary is eligible for a rail only if it holds that rail's identifiers. Collect them when you create the beneficiary.
 - SWIFT payouts are processed manually and are slower than local rails.
-- UPI and IMPS run 24x7; NEFT and RTGS follow Indian bank working days; SWIFT follows FX business days. Check https://docs.glomo.one/multi-currency-account/settlement-holidays.md before promising a date.
+- Do not promise a delivery date from the rail alone. Check https://docs.glomo.one/multi-currency-account/settlement-holidays.md and confirm processing windows with glomo.
 - For INR local rails, the purpose code must also be valid for the rail, or you get "not a valid purpose code for the selected payment rail".
 
 ## Purpose codes
@@ -57,7 +57,7 @@ Public statuses: `pending_approval`, `queued`, `in_progress`, `action_required`,
 - `pending_approval`: the account uses maker-checker. A payout created over the API waits here until someone approves it in the dashboard. Nothing is wrong; do not recreate it.
 - `queued`: waiting for balance (see below).
 - `in_progress`: submitted to the rail, or back under review after an RFI.
-- `action_required`: compliance screening did not clear. glomo may raise an RFI (email, and `GET /rfis`; the payout response does not carry the RFI ID). Answer it with `POST /document` and `PATCH /rfis/{id}/respond`. https://docs.glomo.one/request-for-information/handle-rfi-for-a-payout.md
+- `action_required`: compliance screening did not clear. glomo may raise an RFI (email and dashboard notification). Payout RFIs are answered in the Merchant Dashboard; there is no API path to them today (the payout carries no RFI ID). Treat `action_required` as waiting on a human, not as something your code can resolve. https://docs.glomo.one/request-for-information/handle-rfi-for-a-payout.md
 - Terminal: `success`, `failed`, `cancelled`. None of them change again.
 
 A create call returns 201 even when the payout is already `failed` or `action_required`. Always read the status in the create response.

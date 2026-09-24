@@ -23,13 +23,13 @@ Use these to move objects into the states a real bank, rail or compliance analys
 
 | Call | Simulates | Result |
 | --- | --- | --- |
-| `POST /payment/mock` `{amount, currency, payin_id}` | Customer pays a payment link or order by bank transfer | Screening, then a `success` payment against that payin. The payin must still be `active` (else `PAYIN_NOT_FOUND`), and `amount` must equal the payin's amount in the mocked currency (else `PAYIN_AMOUNT_MISMATCH`); both leave the payment `action_required`. |
+| `POST /payment/mock` `{amount, currency, payin_id}` | Customer pays a payment link or order by bank transfer | Screening, then a `success` payment against that payin. The payin must still be `active` (else `PAYIN_NOT_FOUND`), and `amount` and `currency` must equal what the payer is quoted for that payin (the checkout amount, which can differ from the payin's `amount` when FX or a customer-borne fee applies; else `PAYIN_AMOUNT_MISMATCH`); both leave the payment `action_required`. |
 | `POST /payment/mock` `{amount, currency, payment_method: "BankTransfer"}` | An inbound transfer with no payin | A bank-transfer payment with nothing to match (to test action_required handling) |
 | `PATCH /payment/{id}/mock-funds-available` | Funds clear | `funds_available` set, `payment.funds_available` webhook |
 | `PATCH /payin/{id}/mock_mark_reviewed` | Compliance finishes reviewing a payment link | Payment link `under_review` → `active` |
 | `PATCH /v2/beneficiaries/{id}/mock-review` `{review_action: "approve" \| "reject"}` | Beneficiary review | `pending` → `active` or `rejected` (422 if not `pending`) |
 | `PATCH /payouts/mock` `{id, status}` | The rail's outcome | `pending`, `success`, `failed`, `action_required` or `cancelled`, only along legal transitions. `action_required` is only reachable from `pending_approval`, `queued` or under review, not from a freshly processing payout. A mocked `failed` has `error_code: null`. |
-| `PATCH /refunds/{id}/mock_update_status` `{status: "success" \| "failed"}` | The bank's refund outcome | `success` only once the refund has been sent to the bank; called earlier it errors (currently a 500, not a 400), so `GET` the refund and retry shortly |
+| `PATCH /refunds/{id}/mock_update_status` `{status: "success" \| "failed"}` | The bank's refund outcome | `success` only once the refund has been sent to the bank; called earlier it errors; `GET` the refund and retry shortly |
 | `POST /settlements/mock-trigger` | The settlement run | Settles eligible funds (USD, EUR, GBP, AED, SGD) |
 | `PATCH /platform/merchants/status-update` `{merchant_id, target_status: "success"}` | Onboarding approval of a child merchant (platform accounts) | Child merchant → `success` |
 
@@ -61,7 +61,7 @@ Run each to its terminal state and check both the API response and the webhook y
 
 **Funds and settlement**: a paid payment → `mock-funds-available` if not already available → `POST /settlements/mock-trigger` → expect `settlement` webhooks.
 
-**Payout success and failure**: `POST /v2/beneficiaries` → `mock-review approve` if `pending` → `POST /payouts` → `PATCH /payouts/mock {id, status: "success"}`. Repeat with `failed`; the mocked failure has `error_code: null`, so check your handler copes with a missing code (real failures carry one). `action_required` can only be mocked on accounts with queueing or maker-checker, while the payout is `queued` or `pending_approval`. Also test `mock-review reject` and confirm your code refuses to pay a rejected beneficiary (the payout create is a 400).
+**Payout success and failure**: `POST /v2/beneficiaries` → `mock-review approve` if `pending` → `POST /payouts` → `PATCH /payouts/mock {id, status: "success"}`. Repeat with `failed`; the mocked failure has `error_code: null`, so check your handler copes with a missing code (most real failures carry one). `action_required` can only be mocked on accounts with queueing or maker-checker, while the payout is `queued` or `pending_approval`. Also test `mock-review reject` and confirm your code refuses to pay a rejected beneficiary (the payout create is a 400).
 
 **Refund**: a successful payment → `POST /refunds` with a `request_id` → `PATCH /refunds/{id}/mock_update_status {status: "success"}` → expect `refund.success`. Send the same `request_id` again and expect 400 "Refund already exists for this request_id".
 
