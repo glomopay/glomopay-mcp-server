@@ -8,14 +8,9 @@ export class MCPServer {
   private static SERVER_VERSION = '1.0.0';
   private static instance: MCPServer;
 
-  private server: McpServerInternal;
+  private tools: BaseTool[] = [];
 
-  private constructor() {
-    this.server = new McpServerInternal({
-      name: MCPServer.SERVER_NAME,
-      version: MCPServer.SERVER_VERSION,
-    });
-  }
+  private constructor() {}
 
   static getInstance() {
     if (!MCPServer.instance) MCPServer.instance = new MCPServer();
@@ -24,22 +19,30 @@ export class MCPServer {
   }
 
   registerTool(tool: BaseTool) {
-    const config = tool.getConfig();
-
-    this.server.registerTool(
-      tool.getName(),
-      {
-        title: config.title,
-        description: config.description,
-        inputSchema: config.inputSchema,
-      },
-      tool.handler,
-    );
+    this.tools.push(tool);
 
     return this;
   }
 
   async connect(transport: Transport) {
-    await this.server.connect(transport);
+    const server = new McpServerInternal({
+      name: MCPServer.SERVER_NAME,
+      version: MCPServer.SERVER_VERSION,
+    });
+
+    for (const tool of this.tools) {
+      const config = tool.getConfig();
+      server.registerTool(
+        tool.getName(),
+        {
+          title: config.title,
+          description: config.description,
+          inputSchema: config.inputSchema,
+        },
+        tool.handler,
+      );
+    }
+
+    await server.connect(transport);
   }
 }
