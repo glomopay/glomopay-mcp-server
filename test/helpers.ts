@@ -10,9 +10,9 @@ export const API_BASE = process.env.GLOMO_API_HOST ?? 'https://sandbox-api.glomo
 export const SANDBOX_TOKEN = process.env.GLOMO_SANDBOX_TOKEN ?? jwtToken('sandbox');
 export const isRecording = process.env.NOCK_BACK_MODE === 'record';
 
-const FIXTURE_SPEC = path.resolve(process.cwd(), 'test/fixtures/openapi.json');
+const FIXTURE_SPEC = path.resolve(__dirname, 'fixtures/openapi.json');
 
-nock.back.fixtures = path.resolve(process.cwd(), 'test/fixtures/cassettes');
+nock.back.fixtures = path.resolve(__dirname, 'fixtures/cassettes');
 nock.back.setMode((process.env.NOCK_BACK_MODE as nock.BackMode) || 'lockdown');
 
 export interface ITestServer {

@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { loadSpecIndex, type TSpecIndex } from '@/core/dispatcher/dispatcher.module';
 
-const FIXTURE_SPEC = path.resolve(process.cwd(), 'test/fixtures/openapi.json');
+const FIXTURE_SPEC = path.resolve(__dirname, 'fixtures/openapi.json');
 
 let index: TSpecIndex;
 
