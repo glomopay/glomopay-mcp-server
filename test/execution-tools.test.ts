@@ -74,19 +74,25 @@ describe('path parameters', () => {
 });
 
 describe('allowlist and read/write split', () => {
-  it('refuses an operationId that is not on the allowlist', async () => {
+  it('refuses a non-allowlisted operationId without calling its route', async () => {
+    const scope = nock(API_BASE).post('/api/v1/platform/merchants').reply(201, {});
     const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'onboardMerchant', params: {} }, SANDBOX());
     expect(isRefused(response)).toBe(true);
+    expect(scope.isDone()).toBe(false);
   });
 
-  it('refuses a write operationId through the read tool', async () => {
+  it('refuses a write operationId through the read tool without calling its route', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
     const response = await callTool(server.url, 'glomopay_api_read', { operationId: 'createCustomer', params: {} }, SANDBOX());
     expect(isRefused(response)).toBe(true);
+    expect(scope.isDone()).toBe(false);
   });
 
-  it('refuses a read operationId through the write tool', async () => {
+  it('refuses a read operationId through the write tool without calling its route', async () => {
+    const scope = nock(API_BASE).get('/api/v1/customer').reply(200, {});
     const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'getCustomers', params: {} }, SANDBOX());
     expect(isRefused(response)).toBe(true);
+    expect(scope.isDone()).toBe(false);
   });
 });
 
@@ -172,18 +178,27 @@ describe('method, payload and credential mapping', () => {
 });
 
 describe('per-request isolation', () => {
-  it('routes concurrent requests with different credentials to their own responses', async () => {
-    nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, { id: 'pay_1' });
-    nock(API_BASE).get('/api/v1/payouts/pay_2').reply(200, { id: 'pay_2' });
+  it('forwards each concurrent request its own credential and response', async () => {
+    const tokenA = jwt('sandbox', { sub: 'merchant-a' });
+    const tokenB = jwt('sandbox', { sub: 'merchant-b' });
+
+    const scopeA = nock(API_BASE, { reqheaders: { authorization: `Bearer ${tokenA}` } })
+      .get('/api/v1/payouts/pay_a')
+      .delay(50)
+      .reply(200, { id: 'pay_a' });
+    const scopeB = nock(API_BASE, { reqheaders: { authorization: `Bearer ${tokenB}` } })
+      .get('/api/v1/payouts/pay_b')
+      .reply(200, { id: 'pay_b' });
 
     const [first, second] = await Promise.all([
-      callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } }, jwt('sandbox')),
-      callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_2' } }, jwt('sandbox')),
+      callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_a' } }, tokenA),
+      callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_b' } }, tokenB),
     ]);
 
-    expect(resultText(first)).toContain('pay_1');
-    expect(resultText(first)).not.toContain('pay_2');
-    expect(resultText(second)).toContain('pay_2');
-    expect(resultText(second)).not.toContain('pay_1');
+    expect(resultText(first)).toContain('pay_a');
+    expect(resultText(first)).not.toContain('pay_b');
+    expect(resultText(second)).toContain('pay_b');
+    expect(resultText(second)).not.toContain('pay_a');
+    expect(scopeA.isDone() && scopeB.isDone()).toBe(true);
   });
 });

@@ -1,10 +1,9 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { loadSpecIndex, type TSpecIndex } from '@/core/dispatcher/dispatcher.module';
 
-const FIXTURE_SPEC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/openapi.json');
+const FIXTURE_SPEC = path.resolve(process.cwd(), 'test/fixtures/openapi.json');
 
 let index: TSpecIndex;
 

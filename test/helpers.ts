@@ -1,19 +1,11 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
 
-import { MCPServer } from '@/core/mcp-server/mcp-server.module';
-import { createHttpServer } from '@/core/http/http-server.module';
-import { Dispatcher, loadSpecIndex } from '@/core/dispatcher/dispatcher.module';
-import { executionAllowlist } from '@/features/allowlist/allowlist.module';
-import { ApiReadTool, ApiWriteTool } from '@/features/api-execution/api-execution.module';
-import { ApiClient } from '@/shared/api-client/api-client.module';
+import { createApp } from '@/core/app/app.module';
 
 export const API_BASE = 'https://sandbox.glomo.test';
 
-const FIXTURE_SPEC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/openapi.json');
-
-let registered = false;
+const FIXTURE_SPEC = path.resolve(process.cwd(), 'test/fixtures/openapi.json');
 
 export interface ITestServer {
   url: string;
@@ -21,24 +13,7 @@ export interface ITestServer {
 }
 
 export async function startTestServer(): Promise<ITestServer> {
-  const specIndex = await loadSpecIndex(FIXTURE_SPEC);
-  const apiClient = new ApiClient({ baseURL: API_BASE });
-  const dispatcher = new Dispatcher(specIndex, executionAllowlist, apiClient);
-
-  const readOperationIds = [...executionAllowlist].filter((id) => specIndex.get(id)?.method === 'GET');
-  const writeOperationIds = [...executionAllowlist].filter((id) => {
-    const method = specIndex.get(id)?.method;
-    return !!method && method !== 'GET';
-  });
-
-  const mcp = MCPServer.getInstance();
-  if (!registered) {
-    mcp.registerTool(new ApiReadTool(dispatcher, readOperationIds));
-    mcp.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
-    registered = true;
-  }
-
-  const app = createHttpServer(mcp);
+  const app = await createApp({ specPath: FIXTURE_SPEC, apiHost: API_BASE });
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, () => resolve(listening));
   });
@@ -51,8 +26,8 @@ export async function startTestServer(): Promise<ITestServer> {
   };
 }
 
-export function jwt(env?: string): string {
-  const payload = env ? { env } : {};
+export function jwt(env?: string, extra: Record<string, unknown> = {}): string {
+  const payload = { ...(env ? { env } : {}), ...extra };
   return `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.sig`;
 }
 
@@ -85,4 +60,8 @@ export function resultText(response: IToolResponse): string {
 
 export function isRefused(response: IToolResponse): boolean {
   return Boolean(response.error) || response.result?.isError === true;
+}
+
+export function refusalReason(response: IToolResponse): string {
+  return response.error?.message ?? resultText(response);
 }

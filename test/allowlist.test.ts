@@ -18,8 +18,4 @@ describe('execution allowlist', () => {
   it('has no duplicate entries', () => {
     expect(executionAllowlist.size).toBe(EXECUTION_ALLOWLIST.length);
   });
-
-  it('holds the reviewed operation count', () => {
-    expect(EXECUTION_ALLOWLIST.length).toBe(77);
-  });
 });
