@@ -1,6 +1,8 @@
 ---
 name: glomopay-integration
 description: Core conventions for building against the glomo (Glomopay) payments API - authentication, sandbox vs live, amounts and IDs, request_id idempotency, error handling and retry decisions, pagination, rate limits, quotes, and where to find the authoritative spec. Use whenever writing, reviewing or debugging code that calls api.glomopay.com, before reaching for the payin, payout, webhook or testing skills.
+metadata:
+  version: "1.1.0"
 ---
 
 # glomo integration conventions
@@ -9,7 +11,7 @@ glomo is a cross-border payments platform. This skill carries the judgement the 
 
 ## Ground truth, in order
 
-1. The OpenAPI description, one self-contained file: https://docs.glomo.one/openapi.yaml (JSON: https://docs.glomo.one/openapi.json). It is self-contained: every `$ref` points inside the file. Read the operation you are calling before writing the request. Do not invent fields, enum values or paths.
+1. The OpenAPI description: https://docs.glomo.one/openapi.yaml (JSON: https://docs.glomo.one/openapi.json). It is self-contained: every `$ref` points inside the file. Read the operation you are calling before writing the request. Do not invent fields, enum values or paths.
 2. The docs index: https://docs.glomo.one/llms.txt. Append `.md` to any docs URL for markdown.
 3. The routing table "what are you building": https://docs.glomo.one/get-started.md
 

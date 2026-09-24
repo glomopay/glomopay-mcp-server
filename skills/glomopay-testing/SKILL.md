@@ -1,6 +1,8 @@
 ---
 name: glomopay-testing
 description: How to verify a glomo (Glomopay) integration end to end in sandbox before shipping - getting test keys, the sandbox-only mock endpoints that simulate inbound payments, payout and refund outcomes, beneficiary review, funds availability and settlement; the reserved 6623 amount that forces a sanctions-screening hit; test cards; step-by-step recipes to drive each flow to success and failure; and what sandbox cannot simulate. Use when testing, writing integration tests, or checking that generated glomo API code actually works.
+metadata:
+  version: "1.0.0"
 ---
 
 # glomo sandbox testing

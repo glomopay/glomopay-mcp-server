@@ -1,6 +1,8 @@
 ---
 name: glomopay-payouts
 description: How to send money with the glomo (Glomopay) API - creating and approving v2 beneficiaries, choosing a payout rail (UPI, IMPS, NEFT, RTGS, IPP, FTS, SEPA, FPS, NPP, SWIFT), with-quote vs without-quote payouts, payout purpose codes, the payout status lifecycle, which failures to retry, cancellation rules, queued payouts, balances and RFIs. Use when building or debugging anything that pays a beneficiary.
+metadata:
+  version: "1.0.0"
 ---
 
 # glomo payouts

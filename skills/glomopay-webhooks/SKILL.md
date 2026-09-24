@@ -1,6 +1,8 @@
 ---
 name: glomopay-webhooks
 description: How to consume glomo (Glomopay) webhooks correctly - the event catalogue by entity_type and event_type, which events matter for each payin and payout flow, delivery and retry behaviour, why events can arrive duplicated or out of order, how to dedupe with no event ID, and how to reconcile missed events. Use when writing or debugging a webhook handler, or deciding how an integration learns about status changes.
+metadata:
+  version: "1.0.0"
 ---
 
 # glomo webhooks
