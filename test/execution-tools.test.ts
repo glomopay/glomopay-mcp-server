@@ -127,6 +127,50 @@ describe('downstream errors', () => {
   });
 });
 
+describe('method, payload and credential mapping', () => {
+  it('sends a POST body built from params', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer', { name: 'A', email: 'a@b.com' }).reply(201, { id: 'cust_1' });
+    const response = await callTool(
+      server.url,
+      'glomopay_api_write',
+      { operationId: 'createCustomer', params: { name: 'A', email: 'a@b.com' } },
+      jwt('sandbox'),
+    );
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('maps a PATCH to the right method, path and body', async () => {
+    const scope = nock(API_BASE).patch('/api/v1/payouts/pay_1/cancel', { reason: 'duplicate' }).reply(200, { id: 'pay_1', status: 'cancelled' });
+    const response = await callTool(
+      server.url,
+      'glomopay_api_write',
+      { operationId: 'cancelPayout', params: { id: 'pay_1', reason: 'duplicate' } },
+      jwt('sandbox'),
+    );
+    expect(isRefused(response)).toBe(false);
+    expect(resultText(response)).toContain('cancelled');
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('maps a DELETE to the right method and path', async () => {
+    const scope = nock(API_BASE).delete('/api/v1/virtual-accounts').reply(204);
+    const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'closeVirtualAccount', params: {} }, jwt('sandbox'));
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
+
+  it('forwards the caller credential as a Bearer token downstream', async () => {
+    const token = jwt('sandbox');
+    const scope = nock(API_BASE, { reqheaders: { authorization: `Bearer ${token}` } })
+      .get('/api/v1/payouts/pay_9')
+      .reply(200, { id: 'pay_9' });
+    const response = await callTool(server.url, 'glomopay_api_read', { operationId: 'getPayoutById', params: { id: 'pay_9' } }, token);
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
+});
+
 describe('per-request isolation', () => {
   it('routes concurrent requests with different credentials to their own responses', async () => {
     nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, { id: 'pay_1' });

@@ -46,6 +46,12 @@
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "ok" } }
       }
+    },
+    "/virtual-accounts": {
+      "delete": {
+        "operationId": "closeVirtualAccount",
+        "responses": { "204": { "description": "deleted" } }
+      }
     }
   }
 }
