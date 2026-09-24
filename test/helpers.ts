@@ -61,7 +61,3 @@ export function resultText(response: IToolResponse): string {
 export function isRefused(response: IToolResponse): boolean {
   return Boolean(response.error) || response.result?.isError === true;
 }
-
-export function refusalReason(response: IToolResponse): string {
-  return response.error?.message ?? resultText(response);
-}
