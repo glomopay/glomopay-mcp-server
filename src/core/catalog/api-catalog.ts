@@ -3,37 +3,51 @@ import { OpenAPIV3 } from 'openapi-types';
 import { THttpMethod } from '@/shared/api-client/api-client.module';
 import { IParsedSpec, HTTP_METHODS, normalisePath } from '@/core/dispatcher/dispatcher.module';
 
+export type TExecutionTool = 'glomopay_api_read' | 'glomopay_api_write';
+
 export interface ICatalogParam {
   name: string;
   in: string;
   required: boolean;
-  type?: string;
   description?: string;
-  enum?: unknown[];
+  schema?: unknown;
   example?: unknown;
+  examples?: unknown;
+}
+
+export interface ICatalogBody {
+  required: boolean;
+  contentType: string;
+  schema?: unknown;
+  example?: unknown;
+  examples?: unknown;
 }
 
 export interface ICatalogResponse {
   status: string;
   description?: string;
   schema?: unknown;
+  example?: unknown;
+  examples?: unknown;
 }
 
 export interface ICatalogEntry {
   operationId: string;
   method: THttpMethod;
+  tool: TExecutionTool;
   path: string;
   summary: string;
   description: string;
   tags: string[];
   parameters: ICatalogParam[];
-  requestBody?: { required: boolean; contentType: string; schema: unknown };
+  requestBody?: ICatalogBody;
   responses: ICatalogResponse[];
 }
 
 export interface IApiSearchResult {
   operationId: string;
   method: THttpMethod;
+  tool: TExecutionTool;
   path: string;
   summary: string;
   tags: string[];
@@ -69,7 +83,6 @@ const STOPWORDS = new Set([
 ]);
 const K1 = 1.5;
 const B = 0.75;
-const SCHEMA_MAX_DEPTH = 12;
 
 function tokenize(text: string): string[] {
   return (
@@ -80,46 +93,69 @@ function tokenize(text: string): string[] {
   ).filter((token) => token.length >= 2 && !STOPWORDS.has(token));
 }
 
-function sanitizeSchema(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+function toolFor(method: THttpMethod): TExecutionTool {
+  return method === 'GET' ? 'glomopay_api_read' : 'glomopay_api_write';
+}
+
+function sanitizeSchema(value: unknown, seen = new WeakSet<object>()): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (seen.has(value)) return { $circular: true };
-  if (depth >= SCHEMA_MAX_DEPTH) return { $truncated: true };
 
   seen.add(value);
   const result = Array.isArray(value)
-    ? value.map((item) => sanitizeSchema(item, depth + 1, seen))
-    : Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, val]) => [key, sanitizeSchema(val, depth + 1, seen)]));
+    ? value.map((item) => sanitizeSchema(item, seen))
+    : Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => !key.startsWith('x-'))
+          .map(([key, val]) => [key, sanitizeSchema(val, seen)]),
+      );
   seen.delete(value);
   return result;
 }
 
 function toParam(parameter: OpenAPIV3.ParameterObject): ICatalogParam {
-  const schema = parameter.schema as OpenAPIV3.SchemaObject | undefined;
   return {
     name: parameter.name,
     in: parameter.in,
     required: Boolean(parameter.required),
-    type: schema?.type,
     description: parameter.description,
-    enum: schema?.enum,
-    example: parameter.example ?? schema?.example,
+    schema: parameter.schema ? sanitizeSchema(parameter.schema) : undefined,
+    example: parameter.example,
+    examples: parameter.examples ? sanitizeSchema(parameter.examples) : undefined,
   };
 }
 
-function toRequestBody(operation: OpenAPIV3.OperationObject): ICatalogEntry['requestBody'] {
+function toRequestBody(operation: OpenAPIV3.OperationObject): ICatalogBody | undefined {
   const body = operation.requestBody as OpenAPIV3.RequestBodyObject | undefined;
   const entry = Object.entries(body?.content ?? {})[0];
   if (!entry) return undefined;
   const [contentType, media] = entry;
-  return { required: Boolean(body?.required), contentType, schema: sanitizeSchema(media.schema) };
+  return {
+    required: Boolean(body?.required),
+    contentType,
+    schema: media.schema ? sanitizeSchema(media.schema) : undefined,
+    example: media.example,
+    examples: media.examples ? sanitizeSchema(media.examples) : undefined,
+  };
 }
 
 function toResponses(operation: OpenAPIV3.OperationObject): ICatalogResponse[] {
   return Object.entries(operation.responses ?? {}).map(([status, value]) => {
     const response = value as OpenAPIV3.ResponseObject;
     const media = response.content?.['application/json'] ?? Object.values(response.content ?? {})[0];
-    return { status, description: response.description, schema: media?.schema ? sanitizeSchema(media.schema) : undefined };
+    return {
+      status,
+      description: response.description,
+      schema: media?.schema ? sanitizeSchema(media.schema) : undefined,
+      example: media?.example,
+      examples: media?.examples ? sanitizeSchema(media.examples) : undefined,
+    };
   });
+}
+
+function bodyPropertyNames(entry: ICatalogEntry): string[] {
+  const schema = entry.requestBody?.schema as { properties?: Record<string, unknown> } | undefined;
+  return schema?.properties ? Object.keys(schema.properties) : [];
 }
 
 export class ApiCatalog {
@@ -143,6 +179,7 @@ export class ApiCatalog {
       ...tokenize(entry.path),
       ...tokenize(entry.description),
       ...tokenize(entry.parameters.map((param) => param.name).join(' ')),
+      ...tokenize(bodyPropertyNames(entry).join(' ')),
     ]);
     this.docLengths = docTokens.map((tokens) => tokens.length);
     this.avgdl = this.docLengths.reduce((sum, len) => sum + len, 0) / (this.docLengths.length || 1) || 1;
@@ -190,6 +227,7 @@ export class ApiCatalog {
       .map(({ entry, score }) => ({
         operationId: entry.operationId,
         method: entry.method,
+        tool: entry.tool,
         path: entry.path,
         summary: entry.summary,
         tags: entry.tags,
@@ -201,7 +239,10 @@ export class ApiCatalog {
     const entry = this.byId.get(operationId);
     if (entry) return entry;
     if (this.allSpecIds.has(operationId)) {
-      return { operationId, error: `operationId "${operationId}" exists but is not on the discoverable Glomopay API surface.` };
+      return {
+        operationId,
+        error: `operationId "${operationId}" exists in the spec but is not executable through glomopay_api_read/glomopay_api_write.`,
+      };
     }
     return { operationId, error: `Unknown operationId "${operationId}": not a documented Glomopay operation.` };
   }
@@ -227,6 +268,7 @@ export function buildCatalog(parsed: IParsedSpec, allowedOperationIds: Iterable<
       entries.push({
         operationId: operation.operationId,
         method,
+        tool: toolFor(method),
         path: normalisePath(rawPath, prefix, defaultVersion),
         summary: operation.summary ?? '',
         description: operation.description ?? '',
