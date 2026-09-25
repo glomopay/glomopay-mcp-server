@@ -21,13 +21,12 @@ Discovery is exposed through four credential-free tools:
 | `glomo_sample_request`         | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema.                    |
 | `glomo_implementation_planner` | Placeholder: returns guidance to `glomo_docs_search` and the published skills until authored flows land. |
 
-Execution is exposed through two generic tools plus a health check:
+Execution is exposed through two generic tools:
 
 | Tool              | Methods           | Description                                 |
 | ----------------- | ----------------- | ------------------------------------------- |
 | `glomo_api_read`  | GET               | Run a read-only operation by `operationId`. |
 | `glomo_api_write` | POST/PATCH/DELETE | Run a write operation by `operationId`.     |
-| `healthCheck`     | —                 | Smoke-test tool; returns a greeting.        |
 
 The discovery tools let an agent locate the right `operationId`, inspect its
 schema, and get a ready-to-run sample before calling it. They index the whole

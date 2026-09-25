@@ -28,7 +28,7 @@ afterAll(async () => {
 });
 
 function search(query: string, limit?: number) {
-  return callTool(server.url, 'glomo_docs_search', limit === undefined ? { query } : { query, limit }, 'test');
+  return callTool(server.url, 'glomo_docs_search', limit === undefined ? { query } : { query, limit });
 }
 
 describe('glomo_docs_search', () => {

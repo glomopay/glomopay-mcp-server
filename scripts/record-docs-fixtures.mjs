@@ -8,6 +8,7 @@ import path from 'node:path';
 
 const ORIGIN = 'https://docs.glomo.one';
 const LLMS_FULL = `${ORIGIN}/llms-full.txt`;
+const LLMS_INDEX = `${ORIGIN}/llms.txt`;
 const KEEP = [
   `${ORIGIN}/get-started`,
   `${ORIGIN}/payin`,
@@ -39,26 +40,53 @@ function subset(text) {
   return [preamble, ...kept.map((block) => block.text)].join('\n');
 }
 
-async function main() {
-  const response = await fetch(LLMS_FULL, { signal: AbortSignal.timeout(20000) });
-  if (!response.ok) throw new Error(`failed to fetch ${LLMS_FULL}: ${response.status}`);
+// Keep every non-page line (preamble, section headers) plus the bullet links whose
+// URL is in KEEP, so the recorded index lists exactly the recorded full-file pages.
+function subsetIndex(text) {
+  const keepSet = new Set(KEEP);
+  const kept = new Set();
+  const lines = text.split('\n').filter((line) => {
+    const bullet = line.match(/^\s*-\s*\[[^\]]+\]\((https:\/\/docs\.glomo\.one\/[^)]+)\)/);
+    if (!bullet) return true;
+    const url = bullet[1].replace(/\.md$/, '');
+    if (keepSet.has(url)) {
+      kept.add(url);
+      return true;
+    }
+    return false;
+  });
+  const missing = KEEP.filter((url) => !kept.has(url));
+  if (missing.length) throw new Error(`pages missing from llms.txt: ${missing.join(', ')}`);
+  return lines.join('\n');
+}
 
-  const defs = [
-    {
-      scope: `${ORIGIN}:443`,
-      method: 'GET',
-      path: '/llms-full.txt',
-      body: '',
-      status: 200,
-      response: subset(await response.text()),
-      rawHeaders: { 'content-type': 'text/plain; charset=utf-8' },
-      responseIsBinary: false,
-    },
-  ];
+async function fetchText(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+  if (!response.ok) throw new Error(`failed to fetch ${url}: ${response.status}`);
+  return response.text();
+}
+
+function def(pathname, response) {
+  return {
+    scope: `${ORIGIN}:443`,
+    method: 'GET',
+    path: pathname,
+    body: '',
+    status: 200,
+    response,
+    rawHeaders: { 'content-type': 'text/plain; charset=utf-8' },
+    responseIsBinary: false,
+  };
+}
+
+async function main() {
+  const [full, index] = await Promise.all([fetchText(LLMS_FULL), fetchText(LLMS_INDEX)]);
+  const defs = [def('/llms-full.txt', subset(full)), def('/llms.txt', subsetIndex(index))];
 
   await mkdir(path.dirname(OUT), { recursive: true });
   await writeFile(OUT, JSON.stringify(defs, null, 2));
-  console.error(`[record-docs-fixtures] wrote ${OUT} (${(defs[0].response.length / 1024) | 0} KB)`);
+  const kb = defs.reduce((sum, d) => sum + d.response.length, 0) / 1024;
+  console.error(`[record-docs-fixtures] wrote ${OUT} (${kb | 0} KB, ${defs.length} defs)`);
 }
 
 main().catch((error) => {

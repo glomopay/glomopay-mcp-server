@@ -12,6 +12,7 @@ export interface ICorpusPage extends ICorpusEntry {
 
 export const DOCS_ORIGIN = 'https://docs.glomo.one';
 export const LLMS_FULL_URL = `${DOCS_ORIGIN}/llms-full.txt`;
+export const LLMS_INDEX_URL = `${DOCS_ORIGIN}/llms.txt`;
 
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -70,6 +71,34 @@ export function parseLlmsFull(text: string): ICorpusPage[] {
   return pages;
 }
 
+// llms.txt is the human index: markdown bullets linking each page as `.md`. It is
+// the authority on which pages exist, so the corpus must match it exactly. The
+// api-reference pages are generated from the OpenAPI spec and are excluded here,
+// as they are from llms-full.txt.
+export function parseLlmsIndex(text: string): string[] {
+  const urls = new Set<string>();
+  for (const line of text.split('\n')) {
+    const bullet = line.match(/^\s*-\s*\[[^\]]+\]\(([^)]+)\)/);
+    if (!bullet) continue;
+    const url = bullet[1].replace(/\.md$/, '');
+    if (isDocsUrl(url) && !url.includes('/api-reference/')) urls.add(url);
+  }
+  return [...urls].sort();
+}
+
+function assertCorpusMatchesIndex(pages: ICorpusPage[], indexUrls: string[]): void {
+  const built = new Set(pages.map((page) => page.url));
+  const listed = new Set(indexUrls);
+  const missing = indexUrls.filter((url) => !built.has(url));
+  const unlisted = pages.map((page) => page.url).filter((url) => !listed.has(url));
+  if (missing.length || unlisted.length) {
+    throw new Error(
+      `[corpus] llms-full.txt does not match llms.txt: ${missing.length} listed page(s) missing, ${unlisted.length} unlisted page(s) present. ` +
+        `missing=[${missing.join(', ')}] unlisted=[${unlisted.join(', ')}]`,
+    );
+  }
+}
+
 async function fetchDocs(url: string): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -84,10 +113,13 @@ async function fetchDocs(url: string): Promise<string> {
   throw new Error(`[corpus] failed to fetch ${url}`);
 }
 
-export async function buildCorpus(url: string = LLMS_FULL_URL): Promise<ICorpusPage[]> {
-  if (!isDocsUrl(url)) throw new Error(`[corpus] refusing non-docs llms-full.txt URL: ${url}`);
+export async function buildCorpus(fullUrl: string = LLMS_FULL_URL, indexUrl: string = LLMS_INDEX_URL): Promise<ICorpusPage[]> {
+  if (!isDocsUrl(fullUrl)) throw new Error(`[corpus] refusing non-docs llms-full.txt URL: ${fullUrl}`);
+  if (!isDocsUrl(indexUrl)) throw new Error(`[corpus] refusing non-docs llms.txt URL: ${indexUrl}`);
 
-  const pages = parseLlmsFull(await fetchDocs(url));
+  const [full, index] = await Promise.all([fetchDocs(fullUrl), fetchDocs(indexUrl)]);
+  const pages = parseLlmsFull(full);
+  assertCorpusMatchesIndex(pages, parseLlmsIndex(index));
   if (pages.length === 0) throw new Error('[corpus] no documentation pages parsed from llms-full.txt');
 
   return pages;

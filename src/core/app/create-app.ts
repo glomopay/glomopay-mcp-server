@@ -9,7 +9,6 @@ import { ApiReadTool, ApiWriteTool } from '@/features/api-execution/api-executio
 import { ApiSearchTool, ApiDetailsTool } from '@/features/api-discovery/api-discovery.module';
 import { SampleRequestTool } from '@/features/sample-request/sample-request.module';
 import { ImplementationPlannerTool } from '@/features/implementation-planner/implementation-planner.module';
-import { HealthCheckTool } from '@/features/health-check/health-check.module';
 import { DocsIndex } from '@/core/docs/docs.module';
 import { DocsSearchTool } from '@/features/docs-search/docs-search.module';
 import { ApiClient } from '@/shared/api-client/api-client.module';
@@ -44,7 +43,6 @@ export async function createApp({ specPath, apiHost, docsCorpusPath }: ICreateAp
   mcpServer.registerTool(new ImplementationPlannerTool());
   mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
   mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
-  mcpServer.registerTool(new HealthCheckTool());
 
   return createHttpServer(mcpServer);
 }

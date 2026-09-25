@@ -80,6 +80,19 @@ describe('endpoint auth', () => {
     expect(resultText(response)).toContain('Unauthorized');
     expect(scope.isDone()).toBe(false);
   });
+
+  it('never lends a credential to a request that carries none', async () => {
+    const authed = nock(API_BASE).get('/api/v1/payouts/pay_a').delay(50).reply(200, { id: 'pay_a' });
+    const leaked = nock(API_BASE).get('/api/v1/payouts/pay_b').reply(200, { id: 'pay_b' });
+    const [, anon] = await Promise.all([
+      callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_a' } }, SANDBOX()),
+      callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_b' } }),
+    ]);
+    const after = await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_b' } });
+    expect(isRefused(anon) && isRefused(after)).toBe(true);
+    expect(authed.isDone()).toBe(true);
+    expect(leaked.isDone()).toBe(false);
+  });
 });
 
 describe('request construction', () => {
