@@ -38,8 +38,8 @@ only (`executable: false`) so an agent can still read their schema without being
 able to run them. `glomo_sample_request` renders the credential as a
 `$GLOMO_API_KEY` placeholder. `glomo_implementation_planner` is a registered
 placeholder that points callers to `glomo_docs_search` and the published skills
-until authored per-flow call sequences land. They need no credential
-(the caller's bearer is still required at the transport, see below).
+until authored per-flow call sequences land. None of the discovery tools need a
+credential — they run unauthenticated (see below).
 
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
 `createCustomer`) and a flat `params` object. The dispatcher resolves the
@@ -58,9 +58,13 @@ human adds them.
 The server runs as a **stateless Streamable HTTP** service. The only route is
 `POST /mcp`; `GET`/`DELETE` return `405`.
 
-Every request must carry `Authorization: Bearer <glomopay-secret>`. The bearer is
-the caller's own downstream Glomopay API secret (API-key pass-through): the server
-holds no secret of its own and proxies each call under the caller's key. Credential
+A credential is required only for the execution tools (`glomo_api_read`,
+`glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
+an agent can find and inspect operations before it holds a key. When present,
+`Authorization: Bearer <glomopay-secret>` carries the caller's own downstream
+Glomopay API secret (API-key pass-through): the server holds no secret of its own
+and proxies each call under the caller's key. A read or write with no credential
+is refused by the dispatcher before any downstream call is made. Credential
 handling is isolated behind a single seam
 (`src/features/auth/credential-resolver.ts`) so it can be replaced by the
 follow-on MCP token flow without touching the tool layer.

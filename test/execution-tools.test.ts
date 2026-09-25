@@ -49,13 +49,36 @@ const CUSTOMER_BODY = {
 };
 
 describe('endpoint auth', () => {
-  it('rejects a request with no bearer', async () => {
+  it('lists tools without a bearer', async () => {
     const response = await fetch(server.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
     });
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('glomo_api_search');
+  });
+
+  it('serves a discovery tool without a bearer', async () => {
+    const response = await callTool(server.url, 'glomo_api_search', { query: 'payout' });
+    expect(isRefused(response)).toBe(false);
+  });
+
+  it('refuses a read without a credential, without calling the API', async () => {
+    const scope = nock(API_BASE).get(/.*/).reply(200, {});
+    const response = await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } });
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('Unauthorized');
+    expect(scope.isDone()).toBe(false);
+  });
+
+  it('refuses a write without a credential, without calling the API', async () => {
+    const scope = nock(API_BASE).post(/.*/).reply(201, {});
+    const response = await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY });
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('Unauthorized');
+    expect(scope.isDone()).toBe(false);
   });
 });
 

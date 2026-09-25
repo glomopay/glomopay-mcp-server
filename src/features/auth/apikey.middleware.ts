@@ -11,19 +11,19 @@ declare module 'express-serve-static-core' {
 const BEARER_PREFIX = 'Bearer ';
 
 /**
- * Requires `Authorization: Bearer <glomopay-secret>` on every request and exposes it to
- * tools as `extra.authInfo.token`. The bearer IS the downstream Glomopay secret (API-key
- * pass-through) — the server proxies calls under the caller's own key.
+ * Parses `Authorization: Bearer <glomopay-secret>` when present and exposes it to tools as
+ * `extra.authInfo.token`. The bearer IS the downstream Glomopay secret (API-key pass-through)
+ * — the server proxies calls under the caller's own key. It never rejects a request: the
+ * discovery tools and `tools/list` are usable without a credential, and the read/write tools
+ * fail closed in the dispatcher when no credential is present.
  */
-export const apiKeyAuthMiddleware: RequestHandler = (req, res, next) => {
+export const apiKeyAuthMiddleware: RequestHandler = (req, _res, next) => {
   const header = req.headers.authorization;
   const token = header?.startsWith(BEARER_PREFIX) ? header.slice(BEARER_PREFIX.length).trim() : undefined;
 
-  if (!token) {
-    res.status(401).json({ error: 'Missing or malformed Authorization: Bearer <glomopay-secret> header.' });
-    return;
+  if (token) {
+    req.auth = { token, clientId: 'apikey-passthrough', scopes: [] };
   }
 
-  req.auth = { token, clientId: 'apikey-passthrough', scopes: [] };
   next();
 };

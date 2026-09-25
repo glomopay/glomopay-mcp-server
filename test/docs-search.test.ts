@@ -34,17 +34,17 @@ function search(query: string, limit?: number) {
 describe('glomo_docs_search', () => {
   it('ranks the purpose-codes page first for a purpose-code query', async () => {
     const payload = JSON.parse(resultText(await search('purpose code regulator set'))) as { results: { url: string }[] };
-    expect(payload.results[0].url).toContain('purpose-codes.md');
+    expect(payload.results[0].url).toContain('purpose-codes');
   });
 
   it('ranks the webhooks page first for a signature query', async () => {
     const payload = JSON.parse(resultText(await search('verify webhook signature hmac'))) as { results: { url: string }[] };
-    expect(payload.results[0].url).toContain('webhooks.md');
+    expect(payload.results[0].url).toContain('webhooks');
   });
 
   it('builds the excerpt around the matched term deep in the chunk', async () => {
     const payload = JSON.parse(resultText(await search('P1006'))) as { results: { url: string; excerpt: string }[] };
-    expect(payload.results[0].url).toContain('purpose-codes.md');
+    expect(payload.results[0].url).toContain('purpose-codes');
     expect(payload.results[0].excerpt).toContain('P1006');
   });
 

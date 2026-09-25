@@ -1,23 +1,35 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import nock from 'nock';
 
-import { buildCorpus, parseLlms, DOCS_ORIGIN } from '@/core/docs/docs.module';
+import { buildCorpus, parseLlmsFull, DOCS_ORIGIN } from '@/core/docs/docs.module';
 
-const LLMS = `# Glomopay docs
+const LLMS_FULL = `# Glomo developer documentation
 
-## Payin
-Collecting money.
- - [Purpose Codes](https://docs.glomo.one/payin/purpose-codes.md)
- - [Purpose Codes duplicate](https://docs.glomo.one/payin/purpose-codes.md)
- - [API reference page](https://docs.glomo.one/api-reference/create-payout.md)
- - [Off-host page](https://evil.example.com/payin/steal.md)
- - [Not markdown](https://docs.glomo.one/payin/index.html)
+> The full text of every page.
 
-## Platform
- - [Webhooks](https://docs.glomo.one/platform/webhooks.md)
+Source: https://docs.glomo.one/payin/purpose-codes
+Section: Payin
+
+# Purpose Codes
+
+Codes like P1006 apply to payins.
+
+Source: https://evil.example.com/payin/steal
+Section: Payin
+
+# Off-host
+
+Should be dropped.
+
+Source: https://docs.glomo.one/platform/webhooks
+Section: Platform
+
+# Webhooks
+
+Signed with HMAC SHA-256.
 `;
 
-const MD = { 'content-type': 'text/markdown' };
+const TEXT = { 'content-type': 'text/plain' };
 
 beforeAll(() => {
   nock.disableNetConnect();
@@ -31,40 +43,34 @@ afterAll(() => {
   nock.enableNetConnect();
 });
 
-describe('parseLlms', () => {
-  it('keeps only unique in-domain https .md pages and excludes api-reference', () => {
-    const urls = parseLlms(LLMS).map((entry) => entry.url);
-    expect(urls).toEqual(['https://docs.glomo.one/payin/purpose-codes.md', 'https://docs.glomo.one/platform/webhooks.md']);
+describe('parseLlmsFull', () => {
+  it('splits pages on Source lines, keeps only in-domain https pages, and reads section + title', () => {
+    const pages = parseLlmsFull(LLMS_FULL);
+    expect(pages.map((page) => page.url)).toEqual(['https://docs.glomo.one/payin/purpose-codes', 'https://docs.glomo.one/platform/webhooks']);
+    expect(pages[0]).toMatchObject({ section: 'Payin', title: 'Purpose Codes' });
+    expect(pages[0].content).toContain('P1006');
+    expect(pages[0].content).not.toContain('Section:');
   });
 });
 
 describe('buildCorpus', () => {
-  it('fetches only the allowlisted pages (off-host, api-reference, non-md, duplicates excluded)', async () => {
-    nock(DOCS_ORIGIN).get('/llms.txt').reply(200, LLMS, { 'content-type': 'text/plain' });
-    nock(DOCS_ORIGIN).get('/payin/purpose-codes.md').reply(200, '# Purpose Codes\nP1006', MD);
-    nock(DOCS_ORIGIN).get('/platform/webhooks.md').reply(200, '# Webhooks\nHMAC SHA-256', MD);
-
+  it('builds pages from the single llms-full.txt fetch', async () => {
+    nock(DOCS_ORIGIN).get('/llms-full.txt').reply(200, LLMS_FULL, TEXT);
     const corpus = await buildCorpus();
-    expect(corpus.map((page) => page.url)).toEqual(['https://docs.glomo.one/payin/purpose-codes.md', 'https://docs.glomo.one/platform/webhooks.md']);
+    expect(corpus.map((page) => page.url)).toEqual(['https://docs.glomo.one/payin/purpose-codes', 'https://docs.glomo.one/platform/webhooks']);
   });
 
-  it('fails closed, naming the page, when a listed page returns non-200', async () => {
-    nock(DOCS_ORIGIN).get('/llms.txt').reply(200, LLMS, { 'content-type': 'text/plain' });
-    nock(DOCS_ORIGIN).get('/payin/purpose-codes.md').reply(200, '# ok', MD);
-    nock(DOCS_ORIGIN).get('/platform/webhooks.md').times(2).reply(404);
-
-    await expect(buildCorpus()).rejects.toThrow(/webhooks\.md/);
+  it('fails closed on a non-200', async () => {
+    nock(DOCS_ORIGIN).get('/llms-full.txt').times(2).reply(503);
+    await expect(buildCorpus()).rejects.toThrow(/503|failed to fetch/);
   });
 
-  it('fails closed, naming the page, when a listed page returns non-markdown', async () => {
-    nock(DOCS_ORIGIN).get('/llms.txt').reply(200, LLMS, { 'content-type': 'text/plain' });
-    nock(DOCS_ORIGIN).get('/payin/purpose-codes.md').times(2).reply(200, '<html>soft 404</html>', { 'content-type': 'text/html' });
-    nock(DOCS_ORIGIN).get('/platform/webhooks.md').reply(200, '# Webhooks', MD);
-
-    await expect(buildCorpus()).rejects.toThrow(/purpose-codes\.md/);
+  it('fails closed on a non-text content type', async () => {
+    nock(DOCS_ORIGIN).get('/llms-full.txt').times(2).reply(200, '<html>soft 404</html>', { 'content-type': 'text/html' });
+    await expect(buildCorpus()).rejects.toThrow(/text\/html/);
   });
 
-  it('refuses a non-docs llms.txt URL by reason', async () => {
-    await expect(buildCorpus('https://evil.example.com/llms.txt')).rejects.toThrow(/refusing non-docs/);
+  it('refuses a non-docs llms-full.txt URL by reason', async () => {
+    await expect(buildCorpus('https://evil.example.com/llms-full.txt')).rejects.toThrow(/refusing non-docs/);
   });
 });
