@@ -15,10 +15,10 @@ export class ApiDetailsTool extends BaseTool {
     super();
 
     this.config = {
-      name: 'glomopay_api_details',
-      title: 'Glomopay API Details',
+      name: 'glomo_api_details',
+      title: 'glomo API Details',
       description:
-        'Return the full definition of one or more Glomopay API operations by operationId: method, path, summary, parameters, request body schema and response schemas with examples. Use glomopay_api_search first to discover operationIds. No credential required.',
+        'Return the full definition of one or more glomo API operations by operationId: method, path, summary, parameters, request body schema and response schemas with examples. Use glomo_api_search first to discover operationIds. No credential required.',
       inputSchema: {
         operationIds: z
           .array(z.string().min(1).max(100))

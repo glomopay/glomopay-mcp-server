@@ -16,8 +16,8 @@ Discovery is exposed through two credential-free tools:
 
 | Tool                   | Description                                                                      |
 | ---------------------- | ------------------------------------------------------------------------------- |
-| `glomopay_api_search`  | Find the right operation by keyword; returns ranked `operationId`/method/path.   |
-| `glomopay_api_details` | Return full parameter and request/response schema detail for given `operationId`s. |
+| `glomo_api_search`  | Find the right operation by keyword; returns ranked `operationId`/method/path.   |
+| `glomo_api_details` | Return full parameter and request/response schema detail for given `operationId`s. |
 
 Execution is exposed through two generic tools plus a health check:
 

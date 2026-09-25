@@ -33,10 +33,10 @@ interface IDetailsEntry {
 }
 
 function search(query: string, limit?: number) {
-  return callTool(server.url, 'glomopay_api_search', limit === undefined ? { query } : { query, limit }, 'test');
+  return callTool(server.url, 'glomo_api_search', limit === undefined ? { query } : { query, limit }, 'test');
 }
 function details(operationIds: string[]) {
-  return callTool(server.url, 'glomopay_api_details', { operationIds }, 'test');
+  return callTool(server.url, 'glomo_api_details', { operationIds }, 'test');
 }
 async function searchResults(query: string, limit?: number): Promise<ISearchResult[]> {
   return (JSON.parse(resultText(await search(query, limit))) as { results: ISearchResult[] }).results;
@@ -45,7 +45,7 @@ async function detailsPayload(operationIds: string[]) {
   return JSON.parse(resultText(await details(operationIds))) as { operations: IDetailsEntry[]; omitted?: string[] };
 }
 
-describe('glomopay_api_search', () => {
+describe('glomo_api_search', () => {
   it('ranks a beneficiary operation first for a beneficiary query', async () => {
     expect((await searchResults('beneficiary'))[0].operationId).toMatch(/Beneficiary/);
   });
@@ -97,7 +97,7 @@ describe('glomopay_api_search', () => {
   });
 });
 
-describe('glomopay_api_details', () => {
+describe('glomo_api_details', () => {
   it('resolves $refs so the output carries no $ref', async () => {
     expect(resultText(await details(['createPayout']))).not.toContain('"$ref"');
   });
