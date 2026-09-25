@@ -1,12 +1,13 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Glomo discovery test fixture",
+    "title": "glomo discovery test fixture",
     "version": "1.0.0"
   },
   "servers": [
     {
-      "url": "https://api.glomo.one/api/v1"
+      "url": "https://api.glomopay.com/api/v1",
+      "description": "Production server"
     }
   ],
   "paths": {

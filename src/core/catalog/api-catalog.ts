@@ -34,7 +34,8 @@ export interface ICatalogResponse {
 export interface ICatalogEntry {
   operationId: string;
   method: THttpMethod;
-  tool: TExecutionTool;
+  executable: boolean;
+  tool?: TExecutionTool;
   path: string;
   summary: string;
   description: string;
@@ -47,7 +48,8 @@ export interface ICatalogEntry {
 export interface IApiSearchResult {
   operationId: string;
   method: THttpMethod;
-  tool: TExecutionTool;
+  executable: boolean;
+  tool?: TExecutionTool;
   path: string;
   summary: string;
   tags: string[];
@@ -165,10 +167,7 @@ export class ApiCatalog {
   private idf: Map<string, number>;
   private avgdl: number;
 
-  constructor(
-    private entries: ICatalogEntry[],
-    private allSpecIds: ReadonlySet<string>,
-  ) {
+  constructor(private entries: ICatalogEntry[]) {
     this.byId = new Map(entries.map((entry) => [entry.operationId, entry]));
 
     const repeat = (tokens: string[], times: number): string[] => Array.from({ length: times }, () => tokens).flat();
@@ -227,6 +226,7 @@ export class ApiCatalog {
       .map(({ entry, score }) => ({
         operationId: entry.operationId,
         method: entry.method,
+        executable: entry.executable,
         tool: entry.tool,
         path: entry.path,
         summary: entry.summary,
@@ -236,22 +236,18 @@ export class ApiCatalog {
   }
 
   details(operationId: string): TApiDetailsResult {
-    const entry = this.byId.get(operationId);
-    if (entry) return entry;
-    if (this.allSpecIds.has(operationId)) {
-      return {
+    return (
+      this.byId.get(operationId) ?? {
         operationId,
-        error: `operationId "${operationId}" exists in the spec but is not executable through glomopay_api_read/glomopay_api_write.`,
-      };
-    }
-    return { operationId, error: `Unknown operationId "${operationId}": not a documented Glomopay operation.` };
+        error: `Unknown operationId "${operationId}": not a documented Glomopay operation.`,
+      }
+    );
   }
 }
 
 export function buildCatalog(parsed: IParsedSpec, allowedOperationIds: Iterable<string>): ApiCatalog {
   const { document, prefix, defaultVersion } = parsed;
   const allowed = new Set(allowedOperationIds);
-  const allSpecIds = new Set<string>();
   const entries: ICatalogEntry[] = [];
 
   for (const [rawPath, pathItem] of Object.entries(document.paths ?? {})) {
@@ -261,14 +257,13 @@ export function buildCatalog(parsed: IParsedSpec, allowedOperationIds: Iterable<
       const operation = pathItem[method.toLowerCase() as OpenAPIV3.HttpMethods];
       if (!operation || !operation.operationId) continue;
 
-      allSpecIds.add(operation.operationId);
-      if (!allowed.has(operation.operationId)) continue;
-
+      const executable = allowed.has(operation.operationId);
       const parameters = [...(pathItem.parameters ?? []), ...(operation.parameters ?? [])] as OpenAPIV3.ParameterObject[];
       entries.push({
         operationId: operation.operationId,
         method,
-        tool: toolFor(method),
+        executable,
+        tool: executable ? toolFor(method) : undefined,
         path: normalisePath(rawPath, prefix, defaultVersion),
         summary: operation.summary ?? '',
         description: operation.description ?? '',
@@ -280,5 +275,5 @@ export function buildCatalog(parsed: IParsedSpec, allowedOperationIds: Iterable<
     }
   }
 
-  return new ApiCatalog(entries, allSpecIds);
+  return new ApiCatalog(entries);
 }

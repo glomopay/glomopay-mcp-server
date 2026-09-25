@@ -19,7 +19,8 @@ const outPath = path.join(repoRoot, 'test/fixtures/openapi-discovery.json');
 
 function readAllowlist() {
   const source = readFileSync(path.join(repoRoot, 'src/features/allowlist/allowlist.config.ts'), 'utf8');
-  const block = source.slice(source.indexOf('['), source.indexOf(']'));
+  const start = source.indexOf('= [');
+  const block = source.slice(start, source.indexOf(']', start));
   return new Set([...block.matchAll(/'([^']+)'/g)].map((m) => m[1]));
 }
 
@@ -128,8 +129,8 @@ while (queue.length) {
 
 const fixture = scrub({
   openapi: raw.openapi ?? '3.1.0',
-  info: { title: 'Glomo discovery test fixture', version: '1.0.0' },
-  servers: [{ url: 'https://api.glomo.one/api/v1' }],
+  info: { title: 'glomo discovery test fixture', version: '1.0.0' },
+  servers: raw.servers,
   paths: keptPaths,
   components,
 });

@@ -18,7 +18,7 @@ export class ApiDetailsTool extends BaseTool {
       name: 'glomo_api_details',
       title: 'glomo API Details',
       description:
-        'Return the full definition of one or more glomo API operations by operationId: method, path, summary, parameters, request body schema and response schemas with examples. Use glomo_api_search first to discover operationIds. No credential required.',
+        'Return the full definition of one or more glomo API operations by operationId: method, path, summary, parameters, request body schema and response schemas with examples. Documentation-only operations are returned with `executable: false`. Use glomo_api_search first to discover operationIds. No credential required.',
       inputSchema: {
         operationIds: z
           .array(z.string().min(1).max(100))
@@ -39,7 +39,7 @@ export class ApiDetailsTool extends BaseTool {
 
     for (let i = 0; i < unique.length; i++) {
       const detail = this.catalog.details(unique[i]);
-      const size = JSON.stringify(detail).length;
+      const size = Buffer.byteLength(JSON.stringify(detail));
       if (operations.length > 0 && bytes + size > RESULT_BYTE_BUDGET) {
         omitted.push(...unique.slice(i));
         break;

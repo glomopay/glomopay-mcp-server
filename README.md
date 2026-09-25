@@ -28,10 +28,12 @@ Execution is exposed through two generic tools plus a health check:
 | `healthCheck`        | —                  | Smoke-test tool; returns a greeting.                 |
 
 The discovery tools let an agent locate the right `operationId` and inspect its
-schema before calling it. Both are backed by the same OpenAPI spec and scoped to
-the same allowlist as execution, so search and details only ever surface
-operations that are actually callable. They need no credential (the caller's
-bearer is still required at the transport, see below).
+schema before calling it. Both index the whole published OpenAPI spec and mark
+each operation with an `executable` flag: allowlisted operations carry the tool
+that runs them (`glomopay_api_read`/`glomopay_api_write`), and the rest are
+returned as documentation only (`executable: false`) so an agent can still read
+their schema without being able to run them. They need no credential (the
+caller's bearer is still required at the transport, see below).
 
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
 `createCustomer`) and a flat `params` object. The dispatcher resolves the

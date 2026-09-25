@@ -21,15 +21,17 @@ afterAll(async () => {
 interface ISearchResult {
   operationId: string;
   method: string;
-  tool: string;
+  executable: boolean;
+  tool?: string;
   path: string;
 }
 interface IDetailsEntry {
   operationId: string;
   method?: string;
+  executable?: boolean;
   tool?: string;
   error?: string;
-  parameters?: { name: string; schema?: Record<string, unknown> }[];
+  parameters?: { name: string; example?: unknown; schema?: Record<string, unknown> }[];
 }
 
 function search(query: string, limit?: number) {
@@ -59,7 +61,7 @@ describe('glomo_api_search', () => {
   });
 
   it('indexes top-level request body property names', async () => {
-    const ids = (await searchResults('upi')).map((result) => result.operationId);
+    const ids = (await searchResults('category')).map((result) => result.operationId);
     expect(ids).toContain('createBeneficiaryV2');
   });
 
@@ -72,16 +74,19 @@ describe('glomo_api_search', () => {
     expect(await searchResults('payout', 1)).toHaveLength(1);
   });
 
-  it('tags each result with its execution tool', async () => {
+  it('tags each executable result with its execution tool', async () => {
     const results = await searchResults('beneficiary');
     for (const result of results) {
-      expect(result.tool).toBe(result.method === 'GET' ? 'glomopay_api_read' : 'glomopay_api_write');
+      if (result.executable) expect(result.tool).toBe(result.method === 'GET' ? 'glomopay_api_read' : 'glomopay_api_write');
+      else expect(result.tool).toBeUndefined();
     }
   });
 
-  it('never surfaces a non-allowlisted operation', async () => {
-    const ids = (await searchResults('rotate api key merchant')).map((result) => result.operationId);
-    expect(ids).not.toContain('rotateApiKey');
+  it('surfaces a non-executable operation flagged executable:false', async () => {
+    const result = (await searchResults('rotate api key')).find((entry) => entry.operationId === 'rotateApiKey');
+    expect(result).toBeDefined();
+    expect(result?.executable).toBe(false);
+    expect(result?.tool).toBeUndefined();
   });
 
   it('refuses an empty query', async () => {
@@ -123,24 +128,38 @@ describe('glomo_api_details', () => {
     expect(resultText(await details(['createBeneficiaryV2']))).toContain('missing_category');
   });
 
-  it('returns the full parameter schema, including format and default', async () => {
+  it('returns the full parameter schema and parameter-level example', async () => {
     const entry = (await detailsPayload(['getPayments'])).operations.find((op) => op.operationId === 'getPayments');
     const perPage = entry?.parameters?.find((param) => param.name === 'per_page');
     expect(perPage?.schema?.default).toBe(20);
     const currency = entry?.parameters?.find((param) => param.name === 'currency');
     expect(currency?.schema?.format).toBeDefined();
+    const customerId = entry?.parameters?.find((param) => param.name === 'customer_id');
+    expect(customerId?.example).toBeDefined();
   });
 
-  it('tags each entry with its execution tool', async () => {
+  it('tags each executable entry with its execution tool', async () => {
     const payload = await detailsPayload(['getCustomers', 'createPayout']);
     expect(payload.operations.find((op) => op.operationId === 'getCustomers')?.tool).toBe('glomopay_api_read');
     expect(payload.operations.find((op) => op.operationId === 'createPayout')?.tool).toBe('glomopay_api_write');
   });
 
-  it('distinguishes an off-surface operation from an unknown one', async () => {
-    const payload = await detailsPayload(['rotateApiKey', 'doesNotExist']);
-    expect(payload.operations.find((op) => op.operationId === 'rotateApiKey')?.error).toMatch(/not executable/i);
-    expect(payload.operations.find((op) => op.operationId === 'doesNotExist')?.error).toMatch(/unknown/i);
+  it('returns full detail for a non-executable operation flagged executable:false', async () => {
+    const entry = (await detailsPayload(['rotateApiKey'])).operations.find((op) => op.operationId === 'rotateApiKey');
+    expect(entry?.error).toBeUndefined();
+    expect(entry?.executable).toBe(false);
+    expect(entry?.tool).toBeUndefined();
+    expect(entry?.method).toBeDefined();
+  });
+
+  it('reports a genuinely unknown operationId as unknown', async () => {
+    const entry = (await detailsPayload(['doesNotExist'])).operations.find((op) => op.operationId === 'doesNotExist');
+    expect(entry?.error).toMatch(/unknown/i);
+  });
+
+  it('keeps a non-executable operation out of the write tool', async () => {
+    const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'rotateApiKey', params: {} }, 'test');
+    expect(isRefused(response)).toBe(true);
   });
 
   it('de-duplicates operationIds', async () => {
