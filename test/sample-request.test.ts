@@ -40,7 +40,9 @@ describe('glomo_sample_request', () => {
 
   it('renders an expandable credential placeholder per language', async () => {
     expect(await sampleText('createPayout')).toContain('-H "Authorization: Bearer $GLOMO_API_KEY"');
-    expect(await sampleText('createPayout', 'python')).toContain('f"Bearer {os.environ[\'GLOMO_API_KEY\']}"');
+    const python = await sampleText('createPayout', 'python');
+    expect(python).toContain('f"Bearer {os.environ[\'GLOMO_API_KEY\']}"');
+    expect(python).toMatch(/^import os$/m);
     expect(await sampleText('createPayout', 'node')).toContain('`Bearer ${process.env.GLOMO_API_KEY}`');
   });
 
@@ -84,19 +86,22 @@ describe('glomo_sample_request', () => {
     const text = await sampleText('createDocument', 'python');
     expect(text).toContain('files = {');
     expect(text).toContain('open(');
-    expect(text).toContain('data = {');
+    expect(text).toContain('requests.post(url, headers=headers, data=data, files=files)');
   });
 
   it('renders multipart in Node with FormData', async () => {
     const text = await sampleText('createDocument', 'node');
     expect(text).toContain('new FormData()');
     expect(text).toContain('openAsBlob(');
+    expect(text).toContain('body: form');
   });
 
   it('drops read-only fields and keeps concrete examples through allOf', async () => {
     const text = await sampleText('createPrice');
     expect(text).not.toContain('"created_at"');
     expect(text).not.toContain('"updated_at"');
+    expect(text).not.toContain('"bps"');
+    expect(text).not.toContain('set_as_default');
     expect(text).toContain('"fees_amount": 1000');
   });
 
