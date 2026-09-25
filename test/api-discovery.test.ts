@@ -77,7 +77,7 @@ describe('glomo_api_search', () => {
   it('tags each executable result with its execution tool', async () => {
     const results = await searchResults('beneficiary');
     for (const result of results) {
-      if (result.executable) expect(result.tool).toBe(result.method === 'GET' ? 'glomopay_api_read' : 'glomopay_api_write');
+      if (result.executable) expect(result.tool).toBe(result.method === 'GET' ? 'glomo_api_read' : 'glomo_api_write');
       else expect(result.tool).toBeUndefined();
     }
   });
@@ -140,8 +140,8 @@ describe('glomo_api_details', () => {
 
   it('tags each executable entry with its execution tool', async () => {
     const payload = await detailsPayload(['getCustomers', 'createPayout']);
-    expect(payload.operations.find((op) => op.operationId === 'getCustomers')?.tool).toBe('glomopay_api_read');
-    expect(payload.operations.find((op) => op.operationId === 'createPayout')?.tool).toBe('glomopay_api_write');
+    expect(payload.operations.find((op) => op.operationId === 'getCustomers')?.tool).toBe('glomo_api_read');
+    expect(payload.operations.find((op) => op.operationId === 'createPayout')?.tool).toBe('glomo_api_write');
   });
 
   it('returns full detail for a non-executable operation flagged executable:false', async () => {
@@ -158,7 +158,7 @@ describe('glomo_api_details', () => {
   });
 
   it('keeps a non-executable operation out of the write tool', async () => {
-    const response = await callTool(server.url, 'glomopay_api_write', { operationId: 'rotateApiKey', params: {} }, 'test');
+    const response = await callTool(server.url, 'glomo_api_write', { operationId: 'rotateApiKey', params: {} }, 'test');
     expect(isRefused(response)).toBe(true);
   });
 

@@ -1,9 +1,10 @@
 import { OpenAPIV3 } from 'openapi-types';
 
 import { THttpMethod } from '@/shared/api-client/api-client.module';
+import { Bm25Index } from '@/shared/search/search.module';
 import { IParsedSpec, HTTP_METHODS, normalisePath } from '@/core/dispatcher/dispatcher.module';
 
-export type TExecutionTool = 'glomopay_api_read' | 'glomopay_api_write';
+export type TExecutionTool = 'glomo_api_read' | 'glomo_api_write';
 
 export interface ICatalogParam {
   name: string;
@@ -83,9 +84,6 @@ const STOPWORDS = new Set([
   'you',
   'your',
 ]);
-const K1 = 1.5;
-const B = 0.75;
-
 function tokenize(text: string): string[] {
   return (
     text
@@ -96,7 +94,7 @@ function tokenize(text: string): string[] {
 }
 
 function toolFor(method: THttpMethod): TExecutionTool {
-  return method === 'GET' ? 'glomopay_api_read' : 'glomopay_api_write';
+  return method === 'GET' ? 'glomo_api_read' : 'glomo_api_write';
 }
 
 function sanitizeSchema(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -162,43 +160,23 @@ function bodyPropertyNames(entry: ICatalogEntry): string[] {
 
 export class ApiCatalog {
   private byId: Map<string, ICatalogEntry>;
-  private termFreqs: Map<string, number>[];
-  private docLengths: number[];
-  private idf: Map<string, number>;
-  private avgdl: number;
+  private bm25: Bm25Index;
 
   constructor(private entries: ICatalogEntry[]) {
     this.byId = new Map(entries.map((entry) => [entry.operationId, entry]));
 
     const repeat = (tokens: string[], times: number): string[] => Array.from({ length: times }, () => tokens).flat();
-    const docTokens = entries.map((entry) => [
-      ...repeat(tokenize(entry.operationId), 3),
-      ...repeat(tokenize(entry.summary), 3),
-      ...repeat(tokenize(entry.tags.join(' ')), 2),
-      ...tokenize(entry.path),
-      ...tokenize(entry.description),
-      ...tokenize(entry.parameters.map((param) => param.name).join(' ')),
-      ...tokenize(bodyPropertyNames(entry).join(' ')),
-    ]);
-    this.docLengths = docTokens.map((tokens) => tokens.length);
-    this.avgdl = this.docLengths.reduce((sum, len) => sum + len, 0) / (this.docLengths.length || 1) || 1;
-
-    this.termFreqs = docTokens.map((tokens) => {
-      const freq = new Map<string, number>();
-      for (const token of tokens) freq.set(token, (freq.get(token) ?? 0) + 1);
-      return freq;
-    });
-
-    const docFreq = new Map<string, number>();
-    for (const freq of this.termFreqs) {
-      for (const term of freq.keys()) docFreq.set(term, (docFreq.get(term) ?? 0) + 1);
-    }
-
-    const total = entries.length || 1;
-    this.idf = new Map();
-    for (const [term, df] of docFreq) {
-      this.idf.set(term, Math.log(1 + (total - df + 0.5) / (df + 0.5)));
-    }
+    this.bm25 = new Bm25Index(
+      entries.map((entry) => [
+        ...repeat(tokenize(entry.operationId), 3),
+        ...repeat(tokenize(entry.summary), 3),
+        ...repeat(tokenize(entry.tags.join(' ')), 2),
+        ...tokenize(entry.path),
+        ...tokenize(entry.description),
+        ...tokenize(entry.parameters.map((param) => param.name).join(' ')),
+        ...tokenize(bodyPropertyNames(entry).join(' ')),
+      ]),
+    );
   }
 
   get size(): number {
@@ -209,17 +187,9 @@ export class ApiCatalog {
     const terms = new Set(tokenize(query));
     if (terms.size === 0) return [];
 
+    const scores = this.bm25.scores(terms);
     return this.entries
-      .map((entry, i) => {
-        let score = 0;
-        for (const term of terms) {
-          const freq = this.termFreqs[i].get(term);
-          if (!freq) continue;
-          const idf = this.idf.get(term) ?? 0;
-          score += (idf * (freq * (K1 + 1))) / (freq + K1 * (1 - B + (B * this.docLengths[i]) / this.avgdl));
-        }
-        return { entry, score };
-      })
+      .map((entry, i) => ({ entry, score: scores[i] }))
       .filter((scored) => scored.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)

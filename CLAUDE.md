@@ -13,7 +13,7 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 ## Architecture decisions
 
 - The spec comes from `https://docs.glomo.one/openapi.json` at build time only. Never vendor it or fetch it at runtime.
-- Two generic tools, `glomopay_api_read` (GET) and `glomopay_api_write` (POST/PATCH/DELETE), take
+- Two generic tools, `glomo_api_read` (GET) and `glomo_api_write` (POST/PATCH/DELETE), take
   `{ operationId, params }`. The split exists so a client can be granted reads without writes.
 - `Dispatcher.dispatch` (`src/core/dispatcher/dispatcher.ts`) runs every guard in order: spec lookup,
   allowlist, method-vs-tool, credential, sandbox check on writes, path params. Then it routes params by OpenAPI location.
@@ -26,7 +26,7 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 ## Adding an operation
 
 - Add its `operationId` to `src/features/allowlist/allowlist.config.ts`. It must exist in the published spec.
-- Nothing else. GETs become reachable through `glomopay_api_read`, writes through `glomopay_api_write`.
+- Nothing else. GETs become reachable through `glomo_api_read`, writes through `glomo_api_write`.
 - Ship the tests with it (see Testing).
 
 ## Code conventions
@@ -62,5 +62,5 @@ Do not weaken these without an explicit security review.
 
 ## Naming and PRs
 
-- New names use `glomo`. Existing identifiers stay as they are (`api.glomopay.com`, `X-Glomopay-Signature`, current tool names).
+- Tool names use the `glomo_*` prefix (`glomo_api_read`, `glomo_api_write`, `glomo_api_search`, `glomo_api_details`, `glomo_docs_search`). Wire identifiers stay as they are (`api.glomopay.com`, `X-Glomopay-Signature`).
 - PR titles carry the Jira key: `KAN-1234 | Short summary`.

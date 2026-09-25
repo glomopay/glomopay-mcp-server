@@ -36,7 +36,7 @@ export class Dispatcher {
   ): Promise<CallToolResult> {
     const operation = this.specIndex.get(operationId);
     if (!operation) {
-      return errorResult(`Unknown operationId "${operationId}": not a documented Glomopay operation.`);
+      return errorResult(`Unknown operationId "${operationId}": not a documented glomo operation.`);
     }
 
     if (!this.allowlist.has(operationId)) {
@@ -46,20 +46,20 @@ export class Dispatcher {
     if (!allowedMethods.includes(operation.method)) {
       return errorResult(
         `operationId "${operationId}" is a ${operation.method} operation; this tool only serves ${allowedMethods.join('/')}. ` +
-          `Use ${operation.method === 'GET' ? 'glomopay_api_read' : 'glomopay_api_write'} instead.`,
+          `Use ${operation.method === 'GET' ? 'glomo_api_read' : 'glomo_api_write'} instead.`,
       );
     }
 
     const secret = resolveCredential(extra);
     if (!secret) {
-      return errorResult('Unauthorized: no Glomopay API secret supplied for this request.');
+      return errorResult('Unauthorized: no glomo API secret supplied for this request.');
     }
 
     if (operation.method !== 'GET' && tokenEnvClaim(secret) !== 'sandbox') {
       return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and require a sandbox credential.`);
     }
 
-    // Route from the raw params; the Glomopay API validates the body. A derived
+    // Route from the raw params; the glomo API validates the body. A derived
     // schema would under-model some request bodies and silently drop valid fields.
     const { method } = operation;
     const remaining: Record<string, unknown> = { ...(params ?? {}) };
@@ -113,7 +113,7 @@ export class Dispatcher {
         return errorResult(JSON.stringify({ operationId, statusCode: error.statusCode, message: error.message, error: error.data }));
       }
       const message = error instanceof Error ? error.message : String(error);
-      return errorResult(`Glomopay API call failed for "${operationId}": ${message}`);
+      return errorResult(`glomo API call failed for "${operationId}": ${message}`);
     }
   }
 }

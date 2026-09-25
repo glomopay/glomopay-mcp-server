@@ -23,14 +23,14 @@ Execution is exposed through two generic tools plus a health check:
 
 | Tool                 | Methods            | Description                                          |
 | -------------------- | ------------------ | ---------------------------------------------------- |
-| `glomopay_api_read`  | GET                | Run a read-only operation by `operationId`.          |
-| `glomopay_api_write` | POST/PATCH/DELETE  | Run a write operation by `operationId`.              |
+| `glomo_api_read`  | GET                | Run a read-only operation by `operationId`.          |
+| `glomo_api_write` | POST/PATCH/DELETE  | Run a write operation by `operationId`.              |
 | `healthCheck`        | —                  | Smoke-test tool; returns a greeting.                 |
 
 The discovery tools let an agent locate the right `operationId` and inspect its
 schema before calling it. Both index the whole published OpenAPI spec and mark
 each operation with an `executable` flag: allowlisted operations carry the tool
-that runs them (`glomopay_api_read`/`glomopay_api_write`), and the rest are
+that runs them (`glomo_api_read`/`glomo_api_write`), and the rest are
 returned as documentation only (`executable: false`) so an agent can still read
 their schema without being able to run them. They need no credential (the
 caller's bearer is still required at the transport, see below).
