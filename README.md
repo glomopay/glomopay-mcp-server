@@ -18,6 +18,7 @@ Discovery is exposed through two credential-free tools:
 | ------------------- | ---------------------------------------------------------------------------------- |
 | `glomo_api_search`  | Find the right operation by keyword; returns ranked `operationId`/method/path.      |
 | `glomo_api_details` | Return full parameter and request/response schema detail for given `operationId`s.  |
+| `glomo_sample_request` | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema. |
 
 Execution is exposed through two generic tools plus a health check:
 
