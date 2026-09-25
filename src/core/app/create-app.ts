@@ -8,6 +8,7 @@ import { executionAllowlist } from '@/features/allowlist/allowlist.module';
 import { ApiReadTool, ApiWriteTool } from '@/features/api-execution/api-execution.module';
 import { ApiSearchTool, ApiDetailsTool } from '@/features/api-discovery/api-discovery.module';
 import { SampleRequestTool } from '@/features/sample-request/sample-request.module';
+import { ImplementationPlannerTool } from '@/features/implementation-planner/implementation-planner.module';
 import { HealthCheckTool } from '@/features/health-check/health-check.module';
 import { DocsIndex } from '@/core/docs/docs.module';
 import { DocsSearchTool } from '@/features/docs-search/docs-search.module';
@@ -36,12 +37,11 @@ export async function createApp({ specPath, apiHost, docsCorpusPath }: ICreateAp
   const catalog = buildCatalog(parsedSpec, allowedOperationIds);
 
   const mcpServer = new MCPServer();
-  if (docsCorpusPath) {
-    mcpServer.registerTool(new DocsSearchTool(DocsIndex.fromCorpusFile(docsCorpusPath)));
-  }
+  if (docsCorpusPath) mcpServer.registerTool(new DocsSearchTool(DocsIndex.fromCorpusFile(docsCorpusPath)));
   mcpServer.registerTool(new ApiSearchTool(catalog));
   mcpServer.registerTool(new ApiDetailsTool(catalog));
   mcpServer.registerTool(new SampleRequestTool(catalog));
+  mcpServer.registerTool(new ImplementationPlannerTool());
   mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
   mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
   mcpServer.registerTool(new HealthCheckTool());
