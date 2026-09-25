@@ -14,11 +14,11 @@ tool surface cannot drift from the documented API.
 
 Discovery is exposed through four credential-free tools:
 
-| Tool                           | Description                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `glomo_api_search`             | Find the right operation by keyword; returns ranked `operationId`/method/path.                                      |
-| `glomo_api_details`            | Return full parameter and request/response schema detail for given `operationId`s.                                  |
-| `glomo_sample_request`         | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema.                               |
+| Tool                           | Description                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `glomo_api_search`             | Find the right operation by keyword; returns ranked `operationId`/method/path.                           |
+| `glomo_api_details`            | Return full parameter and request/response schema detail for given `operationId`s.                       |
+| `glomo_sample_request`         | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema.                    |
 | `glomo_implementation_planner` | Placeholder: returns guidance to `glomo_docs_search` and the published skills until authored flows land. |
 
 Execution is exposed through two generic tools plus a health check:
