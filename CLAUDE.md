@@ -3,6 +3,9 @@
 Stateless Streamable HTTP MCP server that proxies the glomo external API under the
 caller's own credential. Tool surface, env vars and deployment are in README.md.
 
+Before starting a feature or PR, read `docs/review-learnings.md` — recurring review
+findings to avoid re-introducing (and add to it when a review flags a new one).
+
 ## Commands
 
 - `pnpm build`: tsc + tsc-alias, then fetches the OpenAPI spec into `dist/`. Fails if the spec is unreachable.
