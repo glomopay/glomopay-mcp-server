@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 
-import { Bm25Index } from '@/shared/search/search.module';
+import { Bm25Index, STOPWORDS, repeat } from '@/shared/search/search.module';
 
 interface IDocChunk {
   title: string;
@@ -30,31 +30,6 @@ interface ICorpusPage {
   content: string;
 }
 
-const STOPWORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'of',
-  'to',
-  'for',
-  'in',
-  'on',
-  'at',
-  'is',
-  'are',
-  'be',
-  'with',
-  'by',
-  'as',
-  'it',
-  'this',
-  'that',
-  'from',
-  'you',
-  'your',
-]);
 const EXCERPT_LIMIT = 1200;
 
 function tokenize(text: string): string[] {
@@ -137,7 +112,6 @@ export class DocsIndex {
   constructor(chunks: IDocChunk[]) {
     this.chunks = chunks;
 
-    const repeat = (tokens: string[], times: number): string[] => Array.from({ length: times }, () => tokens).flat();
     this.bm25 = new Bm25Index(
       chunks.map((chunk) => [
         ...repeat(tokenize(chunk.title), 3),

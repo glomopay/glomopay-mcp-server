@@ -1,10 +1,11 @@
 import { OpenAPIV3 } from 'openapi-types';
 
 import { THttpMethod } from '@/shared/api-client/api-client.module';
-import { Bm25Index } from '@/shared/search/search.module';
+import { Bm25Index, STOPWORDS, repeat } from '@/shared/search/search.module';
 import { IParsedSpec, HTTP_METHODS, normalisePath } from '@/core/dispatcher/dispatcher.module';
 
-export type TExecutionTool = 'glomo_api_read' | 'glomo_api_write';
+export const EXECUTION_TOOLS = { read: 'glomo_api_read', write: 'glomo_api_write' } as const;
+export type TExecutionTool = (typeof EXECUTION_TOOLS)[keyof typeof EXECUTION_TOOLS];
 
 export interface ICatalogParam {
   name: string;
@@ -59,31 +60,6 @@ export interface IApiSearchResult {
 
 export type TApiDetailsResult = ICatalogEntry | { operationId: string; error: string };
 
-const STOPWORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'of',
-  'to',
-  'for',
-  'in',
-  'on',
-  'at',
-  'is',
-  'are',
-  'be',
-  'with',
-  'by',
-  'as',
-  'it',
-  'this',
-  'that',
-  'from',
-  'you',
-  'your',
-]);
 function tokenize(text: string): string[] {
   return (
     text
@@ -94,7 +70,7 @@ function tokenize(text: string): string[] {
 }
 
 function toolFor(method: THttpMethod): TExecutionTool {
-  return method === 'GET' ? 'glomo_api_read' : 'glomo_api_write';
+  return method === 'GET' ? EXECUTION_TOOLS.read : EXECUTION_TOOLS.write;
 }
 
 function sanitizeSchema(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -165,7 +141,6 @@ export class ApiCatalog {
   constructor(private entries: ICatalogEntry[]) {
     this.byId = new Map(entries.map((entry) => [entry.operationId, entry]));
 
-    const repeat = (tokens: string[], times: number): string[] => Array.from({ length: times }, () => tokens).flat();
     this.bm25 = new Bm25Index(
       entries.map((entry) => [
         ...repeat(tokenize(entry.operationId), 3),

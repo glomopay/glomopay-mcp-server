@@ -14,18 +14,18 @@ tool surface cannot drift from the documented API.
 
 Discovery is exposed through two credential-free tools:
 
-| Tool                   | Description                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------- |
-| `glomo_api_search`  | Find the right operation by keyword; returns ranked `operationId`/method/path.   |
-| `glomo_api_details` | Return full parameter and request/response schema detail for given `operationId`s. |
+| Tool                | Description                                                                         |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| `glomo_api_search`  | Find the right operation by keyword; returns ranked `operationId`/method/path.      |
+| `glomo_api_details` | Return full parameter and request/response schema detail for given `operationId`s.  |
 
 Execution is exposed through two generic tools plus a health check:
 
-| Tool                 | Methods            | Description                                          |
-| -------------------- | ------------------ | ---------------------------------------------------- |
-| `glomo_api_read`  | GET                | Run a read-only operation by `operationId`.          |
-| `glomo_api_write` | POST/PATCH/DELETE  | Run a write operation by `operationId`.              |
-| `healthCheck`        | —                  | Smoke-test tool; returns a greeting.                 |
+| Tool                | Methods           | Description                                  |
+| ------------------- | ----------------- | -------------------------------------------- |
+| `glomo_api_read`    | GET               | Run a read-only operation by `operationId`.  |
+| `glomo_api_write`   | POST/PATCH/DELETE | Run a write operation by `operationId`.      |
+| `healthCheck`       | —                 | Smoke-test tool; returns a greeting.         |
 
 The discovery tools let an agent locate the right `operationId` and inspect its
 schema before calling it. Both index the whole published OpenAPI spec and mark
