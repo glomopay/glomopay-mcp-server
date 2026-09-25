@@ -13,10 +13,10 @@ export class DocsSearchTool extends BaseTool {
     super();
 
     this.config = {
-      name: 'glomopay_docs_search',
-      title: 'Glomopay Docs Search',
+      name: 'glomo_docs_search',
+      title: 'glomo Docs Search',
       description:
-        'Search the Glomopay developer documentation (guides, concepts and integration flows) and return cited excerpts with their source URLs. No credential required.',
+        'Search the glomo developer documentation (guides, concepts and integration flows) and return cited excerpts with their source URLs. No credential required.',
       inputSchema: {
         query: z.string().min(1).max(500).describe('The integration question or keywords to search the documentation for.'),
         limit: z.number().int().min(1).max(20).optional().describe('Maximum number of results to return (default 5).'),

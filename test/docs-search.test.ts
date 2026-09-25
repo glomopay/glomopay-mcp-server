@@ -28,10 +28,10 @@ afterAll(async () => {
 });
 
 function search(query: string, limit?: number) {
-  return callTool(server.url, 'glomopay_docs_search', limit === undefined ? { query } : { query, limit }, 'test');
+  return callTool(server.url, 'glomo_docs_search', limit === undefined ? { query } : { query, limit }, 'test');
 }
 
-describe('glomopay_docs_search', () => {
+describe('glomo_docs_search', () => {
   it('ranks the purpose-codes page first for a purpose-code query', async () => {
     const payload = JSON.parse(resultText(await search('purpose code regulator set'))) as { results: { url: string }[] };
     expect(payload.results[0].url).toContain('purpose-codes.md');
