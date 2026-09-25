@@ -62,9 +62,10 @@ describe('glomo_implementation_planner (placeholder)', () => {
     expect(payload.use.tools).toContain('glomo_docs_search');
   });
 
-  it('returns no plan-shaped content', async () => {
-    const payload = JSON.parse(resultText(await plan('accept card payments'))) as Record<string, unknown>;
-    for (const field of ['steps', 'plan', 'calls', 'sequence', 'operations']) expect(payload).not.toHaveProperty(field);
+  it('returns exactly the placeholder keys and no plan-shaped content', async () => {
+    const payload = JSON.parse(resultText(await plan('accept card payments'))) as { use: Record<string, unknown> };
+    expect(Object.keys(payload).sort()).toEqual(['goal', 'message', 'status', 'use']);
+    expect(Object.keys(payload.use).sort()).toEqual(['skills', 'tools']);
   });
 
   it('pins the exact skills index URL', async () => {

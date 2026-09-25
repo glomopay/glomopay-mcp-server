@@ -19,7 +19,7 @@ Discovery is exposed through four credential-free tools:
 | `glomo_api_search`             | Find the right operation by keyword; returns ranked `operationId`/method/path.                                      |
 | `glomo_api_details`            | Return full parameter and request/response schema detail for given `operationId`s.                                  |
 | `glomo_sample_request`         | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema.                               |
-| `glomo_implementation_planner` | Placeholder: returns guidance to `glomo_docs_search` and the published skills until authored flows land (KAN-8608). |
+| `glomo_implementation_planner` | Placeholder: returns guidance to `glomo_docs_search` and the published skills until authored flows land. |
 
 Execution is exposed through two generic tools plus a health check:
 
@@ -38,7 +38,7 @@ only (`executable: false`) so an agent can still read their schema without being
 able to run them. `glomo_sample_request` renders the credential as a
 `$GLOMO_API_KEY` placeholder. `glomo_implementation_planner` is a registered
 placeholder that points callers to `glomo_docs_search` and the published skills
-until authored per-flow call sequences land (KAN-8608). They need no credential
+until authored per-flow call sequences land. They need no credential
 (the caller's bearer is still required at the transport, see below).
 
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
