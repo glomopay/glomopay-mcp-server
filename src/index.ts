@@ -7,6 +7,7 @@ import { config } from '@/features/app-config/app-config.module';
   const app = await createApp({
     specPath: path.resolve(__dirname, 'openapi.json'),
     apiHost: config.glomopay.apiHost,
+    docsCorpusPath: path.resolve(__dirname, 'docs-corpus.json'),
   });
 
   app.listen(config.http.port, config.http.host, () => {
