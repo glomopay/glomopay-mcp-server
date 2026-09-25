@@ -12,28 +12,30 @@ tool surface cannot drift from the documented API.
 
 ## Tool surface
 
-Discovery is exposed through two credential-free tools:
+Discovery is exposed through three credential-free tools:
 
-| Tool                | Description                                                                         |
-| ------------------- | ---------------------------------------------------------------------------------- |
-| `glomo_api_search`  | Find the right operation by keyword; returns ranked `operationId`/method/path.      |
-| `glomo_api_details` | Return full parameter and request/response schema detail for given `operationId`s.  |
+| Tool                   | Description                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `glomo_api_search`     | Find the right operation by keyword; returns ranked `operationId`/method/path.        |
+| `glomo_api_details`    | Return full parameter and request/response schema detail for given `operationId`s.    |
 | `glomo_sample_request` | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema. |
 
 Execution is exposed through two generic tools plus a health check:
 
-| Tool                | Methods           | Description                                  |
-| ------------------- | ----------------- | -------------------------------------------- |
-| `glomo_api_read`    | GET               | Run a read-only operation by `operationId`.  |
-| `glomo_api_write`   | POST/PATCH/DELETE | Run a write operation by `operationId`.      |
-| `healthCheck`       | —                 | Smoke-test tool; returns a greeting.         |
+| Tool              | Methods           | Description                                 |
+| ----------------- | ----------------- | ------------------------------------------- |
+| `glomo_api_read`  | GET               | Run a read-only operation by `operationId`. |
+| `glomo_api_write` | POST/PATCH/DELETE | Run a write operation by `operationId`.     |
+| `healthCheck`     | —                 | Smoke-test tool; returns a greeting.        |
 
-The discovery tools let an agent locate the right `operationId` and inspect its
-schema before calling it. Both index the whole published OpenAPI spec and mark
-each operation with an `executable` flag: allowlisted operations carry the tool
-that runs them (`glomo_api_read`/`glomo_api_write`), and the rest are
-returned as documentation only (`executable: false`) so an agent can still read
-their schema without being able to run them. They need no credential (the
+The discovery tools let an agent locate the right `operationId`, inspect its
+schema, and get a ready-to-run sample before calling it. They index the whole
+published OpenAPI spec and mark each operation with an `executable` flag:
+allowlisted operations carry the tool that runs them
+(`glomo_api_read`/`glomo_api_write`), and the rest are returned as documentation
+only (`executable: false`) so an agent can still read their schema without being
+able to run them. `glomo_sample_request` renders the credential as a
+`$GLOMO_API_KEY` placeholder. They need no credential (the
 caller's bearer is still required at the transport, see below).
 
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
@@ -64,12 +66,12 @@ follow-on MCP token flow without touching the tool layer.
 
 Environment variables:
 
-| Variable          | Default            | Description                                              |
-| ----------------- | ------------------ | -------------------------------------------------------- |
-| `API_HOST`        | —                  | API origin, e.g. `https://api.glomopay.com`.            |
-| `PORT`            | `3000`             | Port to listen on.                                       |
-| `HOST`            | `127.0.0.1`        | Bind address.                                            |
-| `OPENAPI_SPEC_URL`| docs.glomo.one     | Build-time spec source (overridable for CI/testing).    |
+| Variable           | Default        | Description                                          |
+| ------------------ | -------------- | ---------------------------------------------------- |
+| `API_HOST`         | —              | API origin, e.g. `https://api.glomopay.com`.         |
+| `PORT`             | `3000`         | Port to listen on.                                   |
+| `HOST`             | `127.0.0.1`    | Bind address.                                        |
+| `OPENAPI_SPEC_URL` | docs.glomo.one | Build-time spec source (overridable for CI/testing). |
 
 `API_HOST` is the origin only — the versioned base path (`/api/v1`, `/api/v2`) is
 resolved per operation from the spec.

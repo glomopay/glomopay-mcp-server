@@ -48,7 +48,7 @@
                 "payout_without_quote": {
                   "summary": "Payout without quote (no quote_id)",
                   "value": {
-                    "purpose_code": "PYR002",
+                    "purpose_code": "S0802",
                     "beneficiary_id": "bene_a1b2c3d4e5",
                     "source_currency": "USD",
                     "destination_currency": "INR",
@@ -69,7 +69,7 @@
                   "value": {
                     "quote_id": "quote_3m4n5o6p7q",
                     "beneficiary_id": "bene_a1b2c3d4e5",
-                    "purpose_code": "PYR002",
+                    "purpose_code": "S0802",
                     "invoice_number": "INV-2026-001",
                     "request_id": "req-7f3a9c20",
                     "documents": [
@@ -106,7 +106,7 @@
             }
           },
           "409": {
-            "description": "A payout with this `request_id` already exists",
+            "description": "A payout with this `request_id` already exists on your account. The existing payout is not returned; look it up with `GET /v1/payouts?request_id=<your_request_id>`.\n",
             "content": {
               "application/json": {
                 "schema": {
@@ -118,7 +118,7 @@
                     },
                     "message": {
                       "type": "string",
-                      "example": "A payout with this request_id already exists"
+                      "example": "Record already exists"
                     }
                   }
                 }
@@ -219,8 +219,8 @@
             "description": "Filters on the payment's `requested_currency` / `converted_currency` — the currency the merchant asked for, which is also the currency of the order or payment link the payment belongs to. It does not filter on `payment_currency`, the currency the customer was actually charged in. Those two differ whenever local payments are in play: a card payment against a USD order is commonly charged to the customer in AED, and that payment matches `USD`, not `AED`. Matching is case-insensitive.\n",
             "schema": {
               "type": "string",
-              "format": "iso-4217, case-insensitive",
-              "description": "The currency in which the payment is made. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n"
+              "format": "iso-4217",
+              "description": "The currency in which the payment is made. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format, case-insensitive. For example, USD.\n"
             },
             "example": "USD"
           },
@@ -230,7 +230,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Filter payments by the merchant-provided idempotency key.",
+            "description": "Return only the payment created with this `request_id`.",
             "example": "unique_request_id_123"
           },
           {
@@ -788,10 +788,10 @@
             "name": "id",
             "in": "path",
             "required": true,
-            "description": "The unique identifier of the payout to cancel.",
+            "description": "The unique identifier of the payout to cancel. Starts with `payout_` followed by letters and digits. An ID of any other shape is rejected with `400` and a message saying it must start with `payout_`; a well-formed ID that doesn't match a payout on your account returns `404`.\n",
             "schema": {
               "type": "string",
-              "example": "pout_DdWp_HUbOnlg"
+              "example": "payout_DdWpHUbOnlg"
             }
           }
         ],
@@ -923,6 +923,739 @@
                       "description": "Error message indicating which parameter was invalid"
                     }
                   }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/orders": {
+      "post": {
+        "tags": [
+          "Orders"
+        ],
+        "summary": "Create a new order",
+        "description": "Create an order for checkout in one of two ways:\n- **Order without quote** — specify the amount, currency and payment methods inline\n  (`Orders`).\n\n- **Order with quote** — pass a `quote_id` from `POST /quotes` (with `resource: payin`) to bind\n  the order to a quote. When supplied, the quote is the single source of truth for amount,\n  currency, payment method, expiry and fee splits; the locked fields (`amount`, `currency`,\n  `price_id`, `payment_methods`, `split_ids`) must not be sent (`CreateOrderWithQuoteRequest`).\n  **When a `quote_id` is supplied, the order's expiry is set to the quote's expiry.**\n\nThe request variant is selected by the presence of `quote_id`.\n\nPass `split_ids` to declare your share of a dynamic pricing rule's fee for this order. See [Dynamic Fee Split](#tag/pricing_split). If a split on the order later stops resolving — Glomo deleted the underlying rule, or the rule is no longer dynamic — opening the checkout returns a `400 Bad Request`, the order is expired, and you must issue a new one.\nTo check complete list of API validations, click [here](/platform/validations#validations-for-creating-orders).\n",
+        "operationId": "createOrder",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Orders",
+                    "required": [
+                      "amount",
+                      "currency",
+                      "customer_id"
+                    ]
+                  },
+                  {
+                    "$ref": "#/components/schemas/CreateOrderWithQuoteRequest",
+                    "required": [
+                      "quote_id",
+                      "customer_id"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Order created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request — validation error. For quote-based orders, possible messages include `quote_id not found`, `quote_id is not a payin quote`, `quote_id has expired`, `quote_id has already been used`, and `amount cannot be specified when quote_id is present` (likewise for any other locked field: `currency`, `price_id`, `payment_methods`, `split_ids`).\n\nFor `split_ids`, every id must resolve to a live dynamic rule declared by your business, every dynamic rule on the same dimension must be declared, and every declared payment method must be enabled for your business.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Bad Request"
+                      ]
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Error message.\n",
+                      "example": "Currency not supported"
+                    }
+                  }
+                },
+                "examples": {
+                  "currency_not_supported": {
+                    "summary": "Currency not supported",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Currency not supported"
+                    }
+                  },
+                  "duplicate_request_id": {
+                    "summary": "Duplicate request_id",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Order already exists for this request_id"
+                    }
+                  },
+                  "quote_not_found": {
+                    "summary": "quote_id not found",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id not found"
+                    }
+                  },
+                  "quote_not_payin": {
+                    "summary": "quote_id is not a payin quote",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id is not a payin quote"
+                    }
+                  },
+                  "quote_expired": {
+                    "summary": "quote_id has expired",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id has expired"
+                    }
+                  },
+                  "quote_already_used": {
+                    "summary": "quote_id has already been used",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id has already been used"
+                    }
+                  },
+                  "locked_field_amount": {
+                    "summary": "Locked field sent with quote_id",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "amount cannot be specified when quote_id is present"
+                    }
+                  },
+                  "locked_field_split_ids": {
+                    "summary": "split_ids sent with quote_id",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids cannot be specified when quote_id is present"
+                    }
+                  },
+                  "split_ids_unresolved": {
+                    "summary": "A split id does not resolve to a live dynamic rule",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are invalid or no longer point at a dynamic rule: psplit_7Kq2mXbTdLp9"
+                    }
+                  },
+                  "split_ids_incomplete": {
+                    "summary": "Another dynamic rule on the same dimension is not declared",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids must be declared for every dynamic rule on the dimension, missing rules: price_Kd82nvQ1TzAe"
+                    }
+                  },
+                  "split_ids_method_not_enabled": {
+                    "summary": "A declared payment method is not enabled for your business",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are not valid for any enabled payment method: bank_transfer"
+                    }
+                  },
+                  "split_ids_required": {
+                    "summary": "split_ids omitted on an account where a declaration is required",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are required when dynamic fee splits are enforced"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/refunds": {
+      "post": {
+        "tags": [
+          "Refund"
+        ],
+        "summary": "Create refund for a payment",
+        "description": "Creates refund for a payment entity if the payment is in success state and no other refund exists.\n",
+        "operationId": "createRefund",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "Requested By Customer",
+                      "Duplicate",
+                      "Fraudulent",
+                      "Others"
+                    ],
+                    "description": "The reason for the refund. Send one of the listed values exactly as written: the match is case-sensitive and includes the spaces, so `Requested By Customer` is accepted and `requested_by_customer` or `Requested by customer` is rejected with a `400`.\n"
+                  },
+                  "payment_id": {
+                    "type": "string",
+                    "description": "The unique identifier of payment linked to refund.\n",
+                    "example": "payt_E602dMzgjpDC"
+                  },
+                  "document_id": {
+                    "type": "string",
+                    "description": "The id of document that is uploaded for refund.\n",
+                    "example": "doc_E602dMd2adDC"
+                  },
+                  "document_url": {
+                    "type": "string",
+                    "description": "The url of document that is uploaded for refund.\n",
+                    "example": "https://www.example.com/documents/invoice.pdf"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "description": "The name of document that is uploaded for refund.\n",
+                    "example": "invoice"
+                  },
+                  "amount": {
+                    "type": "integer",
+                    "description": "The amount to refund in cents. Required for partial refunds. If not provided, the full payment amount will be refunded. For example, 1000 cents is $10.00. The currency is determined by the payment's currency.\n",
+                    "example": 1000
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "description": "Your unique identifier for this refund, used to reject duplicates. If a refund with the same `request_id` already exists on your account, the request is rejected with `400` and the message `Refund already exists for this request_id`, unless the payment first fails another refund check (for example, it's already fully refunded). The existing refund is not returned. Look it up with `GET /v1/refunds?request_id=<your_request_id>`.\n",
+                    "example": "unique_refund_request_id_123"
+                  }
+                },
+                "required": [
+                  "payment_id",
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Refund created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "$ref": "#/components/schemas/Refund"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "description": "Error message.\n",
+                      "example": "Refund is already in progress."
+                    }
+                  }
+                },
+                "examples": {
+                  "refund_in_progress": {
+                    "summary": "Refund already in progress",
+                    "value": {
+                      "message": "Refund is already in progress."
+                    }
+                  },
+                  "duplicate_request_id": {
+                    "summary": "Duplicate request_id",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Refund already exists for this request_id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/payin": {
+      "post": {
+        "tags": [
+          "payment_link"
+        ],
+        "summary": "Create a new Payment Link",
+        "description": "Create a shareable URL for a hosted payment page in one of two ways:\n- **Payment link without quote** — specify the amount, currency, expiry and payment methods\n  inline (`PaymentLink`).\n\n- **Payment link with quote** — pass a `quote_id` from `POST /quotes` (with `resource: payin`) to\n  bind the payment link to a quote. When supplied, the quote is the single source of truth for\n  amount, currency, payment method, expiry and fee splits; the locked fields (`amount`, `currency`,\n  `expires_at`, `price_id`, `payment_methods`, `split_ids`) must not be sent\n  (`CreatePaymentLinkWithQuoteRequest`). **When a `quote_id` is supplied, the payment link's\n  expiry is set to the quote's expiry.**\n\nThe request variant is selected by the presence of `quote_id`.\n\nPass `split_ids` to declare your share of a dynamic pricing rule's fee for this payment link. See [Dynamic Fee Split](#tag/pricing_split). If a split on the payment link later stops resolving — Glomo deleted the underlying rule, or the rule is no longer dynamic — opening the checkout returns a `400 Bad Request`, the payment link is expired, and you must issue a new one.\n\nPayment link creation does not take a `request_id` and has no duplicate-request check. Sending the same request twice without a `quote_id` creates two payment links, and `GET /v1/payin` has no `request_id` filter.\nTo check complete list of API validations, click [here](/platform/validations#validations-for-creating-payment-links).\n",
+        "operationId": "createPayin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PaymentLink",
+                    "required": [
+                      "amount",
+                      "currency",
+                      "customer_id",
+                      "purpose_code",
+                      "expires_at"
+                    ]
+                  },
+                  {
+                    "$ref": "#/components/schemas/CreatePaymentLinkWithQuoteRequest",
+                    "required": [
+                      "quote_id",
+                      "customer_id",
+                      "purpose_code"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payment link created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentLinkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request — validation error. For quote-based payment links, possible messages include `quote_id not found`, `quote_id is not a payin quote`, `quote_id has expired`, `quote_id has already been used`, and `amount cannot be specified when quote_id is present` (likewise for any other locked field: `currency`, `expires_at`, `price_id`, `payment_methods`, `split_ids`).\n\nFor `split_ids`, every id must resolve to a live dynamic rule declared by your business, every dynamic rule on the same dimension must be declared, and every declared payment method must be enabled for your business.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Bad Request"
+                      ]
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Error message.\n",
+                      "example": "You can only send source_amount or target_amount, not both."
+                    }
+                  }
+                },
+                "examples": {
+                  "amount_conflict": {
+                    "summary": "Both amounts specified",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "You can only send source_amount or target_amount, not both."
+                    }
+                  },
+                  "quote_not_found": {
+                    "summary": "quote_id not found",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id not found"
+                    }
+                  },
+                  "quote_not_payin": {
+                    "summary": "quote_id is not a payin quote",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id is not a payin quote"
+                    }
+                  },
+                  "quote_expired": {
+                    "summary": "quote_id has expired",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id has expired"
+                    }
+                  },
+                  "quote_already_used": {
+                    "summary": "quote_id has already been used",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "quote_id has already been used"
+                    }
+                  },
+                  "locked_field_amount": {
+                    "summary": "Locked field sent with quote_id",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "amount cannot be specified when quote_id is present"
+                    }
+                  },
+                  "locked_field_split_ids": {
+                    "summary": "split_ids sent with quote_id",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids cannot be specified when quote_id is present"
+                    }
+                  },
+                  "split_ids_unresolved": {
+                    "summary": "A split id does not resolve to a live dynamic rule",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are invalid or no longer point at a dynamic rule: psplit_7Kq2mXbTdLp9"
+                    }
+                  },
+                  "split_ids_incomplete": {
+                    "summary": "Another dynamic rule on the same dimension is not declared",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids must be declared for every dynamic rule on the dimension, missing rules: price_Kd82nvQ1TzAe"
+                    }
+                  },
+                  "split_ids_method_not_enabled": {
+                    "summary": "A declared payment method is not enabled for your business",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are not valid for any enabled payment method: bank_transfer"
+                    }
+                  },
+                  "split_ids_required": {
+                    "summary": "split_ids omitted on an account where a declaration is required",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are required when dynamic fee splits are enforced"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/document": {
+      "post": {
+        "tags": [
+          "Document"
+        ],
+        "summary": "Create a new document",
+        "description": "Uploads a file and returns a document record you can reference from other resources — as the invoice\nor supporting paperwork on a payin or payout, or as evidence when responding to a request for\ninformation (RFI).\n\nSend the request as `multipart/form-data`. The file must be a JPEG, PNG or PDF of at most 10 MB\n(10,485,760 bytes), and the uploaded filename and `document_name` at most 128 characters each.\n\nUpload is a separate step from attaching, and each consumer names the reference differently: pass the\nreturned `id` as `document_id` when creating a payin, an order or a refund, and inside the `documents`\narray when creating a payout or responding to an RFI. Check the schema of the endpoint you are\nattaching to — the key inside `documents` is not the same on every one. A document that is never\nreferenced stays listed but has no effect.\n",
+        "operationId": "createDocument",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "document_name": {
+                    "type": "string",
+                    "description": "The name of the document\n",
+                    "example": "invoice"
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The file to be uploaded. This should be sent as a binary in the multipart/form-data request.\n"
+                  }
+                },
+                "required": [
+                  "file",
+                  "document_name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Document created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/subscriptions": {
+      "post": {
+        "tags": [
+          "Subscription"
+        ],
+        "summary": "Create a new subscription",
+        "description": "Creates a new subscription for a customer with specified billing plan and schedule. The subscription will be created in 'created' status and will be activated when the customer completes the first payment.\n\nOn an `as_presented` subscription, pass `split_ids` to declare your share of a dynamic pricing rule's fee. See [Dynamic Fee Split](#tag/pricing_split). The declaration applies to the first payment and to every subsequent auto debit that does not pass `split_ids` of its own. `split_ids` is rejected on a fixed-frequency subscription, because a fixed-frequency plan auto debits without you and so has no point at which to pass a split or replace one that goes stale.\n\nIf the subscription's declaration later stops resolving — Glomo deleted the underlying rule, or the rule is no longer dynamic — the next auto debit is rejected with a `400 Bad Request` until you pass a valid `split_ids` on [Create a payment](#tag/Payment).\n",
+        "operationId": "createSubscription",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSubscriptionRequest"
+              },
+              "examples": {
+                "monthly_subscription": {
+                  "summary": "Standard monthly subscription",
+                  "value": {
+                    "customer_id": "cust_5JU9yv0lGSUP",
+                    "product_name": "REDACTED",
+                    "product_description": "Flexible monthly insurance for belongings travel and digital assets easy to manage",
+                    "plan_name": "REDACTED",
+                    "plan_description": "Simple, monthly insurance plan that covers your basic belongings and key digital assets",
+                    "amount": 1000,
+                    "currency": "USD",
+                    "interval_type": "month",
+                    "interval_count": 1,
+                    "billing_cycles": 12,
+                    "start_date": "2025-01-01",
+                    "expires_at": "2025-01-07",
+                    "notify_customer": true,
+                    "starts_with_first_payment": true
+                  }
+                },
+                "as_presented_subscription": {
+                  "summary": "Subscription with as_presented interval (flexible billing, merchant-initiated subsequent payments)",
+                  "value": {
+                    "customer_id": "cust_5JU9yv0lGSUP",
+                    "product_name": "REDACTED",
+                    "product_description": "Flexible insurance for belongings easy to manage",
+                    "plan_name": "REDACTED",
+                    "plan_description": "Subscription with flexible billing intervals",
+                    "amount": 1000,
+                    "max_amount": 5000,
+                    "currency": "USD",
+                    "interval_type": "as_presented",
+                    "expires_at": "2025-01-07",
+                    "notify_customer": true,
+                    "starts_with_first_payment": true
+                  }
+                },
+                "as_presented_subscription_with_splits": {
+                  "summary": "as_presented subscription priced from a declared dynamic fee split",
+                  "value": {
+                    "customer_id": "cust_5JU9yv0lGSUP",
+                    "product_name": "REDACTED",
+                    "product_description": "Flexible insurance for belongings easy to manage",
+                    "plan_name": "REDACTED",
+                    "plan_description": "Subscription with flexible billing intervals",
+                    "amount": 1000,
+                    "max_amount": 5000,
+                    "currency": "USD",
+                    "interval_type": "as_presented",
+                    "expires_at": "2025-01-07",
+                    "notify_customer": true,
+                    "starts_with_first_payment": true,
+                    "split_ids": [
+                      "psplit_7Kq2mXbTdLp9"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Subscription created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateSubscriptionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request - validation error or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Bad Request"
+                      ]
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Error message describing the validation failure",
+                      "example": "Customer not found"
+                    }
+                  }
+                },
+                "examples": {
+                  "customer_not_found": {
+                    "summary": "Customer not found",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Customer not found"
+                    }
+                  },
+                  "split_ids_on_fixed_frequency": {
+                    "summary": "split_ids sent on a fixed-frequency subscription",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are only supported for as_presented subscriptions"
+                    }
+                  },
+                  "split_ids_unresolved": {
+                    "summary": "A split id does not resolve to a live dynamic rule",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids are invalid or no longer point at a dynamic rule: psplit_7Kq2mXbTdLp9"
+                    }
+                  },
+                  "split_ids_incomplete": {
+                    "summary": "Another dynamic rule on the same dimension is not declared",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Split ids must be declared for every dynamic rule on the dimension, missing rules: price_Kd82nvQ1TzAe"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/prices": {
+      "post": {
+        "tags": [
+          "Price"
+        ],
+        "summary": "Create a new price",
+        "description": "Creates a price governing the referral fee applied to payins, which you then attach to a payin or an\norder by passing its ID as `price_id`. The fee it produces is returned as `referral_fee` on the\npayment and in a quote's `fees` breakdown.\n\nEvery price created here governs the referral fee — there is no fee type to choose, which is why the\nPrice object carries no `fee_type` field. `GET /prices` lists these and only these.\n\n`pricing_type` selects the shape of the rule and which other fields are permitted — sending a field\nbelonging to the other shape is rejected rather than ignored:\n\n- `fixed` requires `fees_amount` and `fees_currency`, and must not include `bps`.\n\n- `percentage` requires `bps`, and must not include `fees_amount` or `fees_currency`.\n\nThe first referral-fee price you create becomes your default automatically, whether or not you send\n`set_as_default`. After that, sending `set_as_default: true` promotes this price and demotes the\nprevious default — a business has at most one default referral-fee price at a time. The default is\nwhat applies when a payin does not name a `price_id`.\n",
+        "operationId": "createPrice",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Price"
+                  },
+                  {
+                    "type": "object",
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "pricing_type": {
+                            "enum": [
+                              "fixed"
+                            ]
+                          },
+                          "fees_currency": {
+                            "type": "string"
+                          },
+                          "fees_amount": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "pricing_type",
+                          "fees_currency",
+                          "fees_amount"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "pricing_type": {
+                            "enum": [
+                              "percentage"
+                            ]
+                          },
+                          "bps": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "pricing_type",
+                          "bps"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payout created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Price"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
               }
             }
@@ -1083,8 +1816,8 @@
         "properties": {
           "purpose_code": {
             "type": "string",
-            "description": "Purpose code for this payout.\n",
-            "example": "PYR002"
+            "description": "Why you are sending this payout, as a code from a fixed set: see [Payout purpose codes](/payout/purpose-codes). This is not free text. Pass a listed code exactly, for example `S0802`; matching is exact and case-sensitive. Payouts and payins use different sets, so a payin code such as `P1401` is rejected here. An unrecognised code is rejected with `400 Bad Request`.\n\nINR payouts on a local rail (`neft`, `imps`, `rtgs`, `upi`) accept only a subset of the payout codes. A code outside that subset is rejected with `400 Bad Request`, with a message saying the code is not valid for the selected payment rail.\n",
+            "example": "S0802"
           },
           "beneficiary_id": {
             "type": "string",
@@ -1144,9 +1877,10 @@
               "fts",
               "sepa",
               "fps",
+              "npp",
               "swift"
             ],
-            "description": "The payment rail to use for this payout. Each local rail serves one corridor and is only available when `destination_currency` matches it: `upi`, `imps`, `neft`, `rtgs` for `INR`; `ipp`, `fts` for `AED`; `sepa` for `EUR`; `fps` for `GBP`. `swift` is used for international transfers and is available on any corridor. The rail must be eligible for the beneficiary and the amount must fall inside the rail's limits. Defaults to `swift` if omitted; a local rail is not selected automatically.\n",
+            "description": "The payment rail to use for this payout. Each local rail serves one corridor and is only available when `destination_currency` matches it: `upi`, `imps`, `neft`, `rtgs` for `INR`; `ipp`, `fts` for `AED`; `sepa` for `EUR`; `fps` for `GBP`; `npp` for `AUD`. `swift` is used for international transfers and is available on any corridor. The rail must be eligible for the beneficiary and the amount must fall inside the rail's limits. Defaults to `swift` if omitted; a local rail is not selected automatically.\n",
             "example": "neft"
           },
           "invoice_number": {
@@ -1158,7 +1892,7 @@
           "request_id": {
             "type": "string",
             "maxLength": 64,
-            "description": "A unique client-generated identifier for this payout request. If a payout with the same `request_id` already exists for your business, the API returns a `409 Conflict` response. Use this to safely retry payout creation without risk of creating duplicates. You can look up the existing payout using `GET /v1/payouts?request_id=<your_request_id>`.\n",
+            "description": "Your unique identifier for this payout, at most 64 characters, used to reject duplicates. If a payout with the same `request_id` already exists on your account, the request is rejected with `409 Conflict` and the message `Record already exists`; no second payout is created and the existing payout is not returned. Look it up with `GET /v1/payouts?request_id=<your_request_id>`. A value longer than 64 characters is rejected with `400`.\n",
             "example": "req-7f3a9c20"
           },
           "documents": {
@@ -1195,8 +1929,8 @@
           },
           "purpose_code": {
             "type": "string",
-            "description": "Purpose code for this payout.\n",
-            "example": "PYR002"
+            "description": "Why you are sending this payout, as a code from a fixed set: see [Payout purpose codes](/payout/purpose-codes). This is not free text. Pass a listed code exactly, for example `S0802`; matching is exact and case-sensitive. Payouts and payins use different sets, so a payin code such as `P1401` is rejected here. An unrecognised code is rejected with `400 Bad Request`.\n\nINR payouts on a local rail (`neft`, `imps`, `rtgs`, `upi`) accept only a subset of the payout codes. A code outside that subset is rejected with `400 Bad Request`, with a message saying the code is not valid for the selected payment rail.\n",
+            "example": "S0802"
           },
           "invoice_number": {
             "type": "string",
@@ -1207,7 +1941,7 @@
           "request_id": {
             "type": "string",
             "maxLength": 64,
-            "description": "A unique client-generated identifier for this payout request. If a payout with the same `request_id` already exists for your business, the API returns a `409 Conflict` response. Use this to safely retry payout creation without risk of creating duplicates. You can look up the existing payout using `GET /v1/payouts?request_id=<your_request_id>`.\n",
+            "description": "Your unique identifier for this payout, at most 64 characters, used to reject duplicates. If a payout with the same `request_id` already exists on your account, the request is rejected with `409 Conflict` and the message `Record already exists`; no second payout is created and the existing payout is not returned. Look it up with `GET /v1/payouts?request_id=<your_request_id>`. A value longer than 64 characters is rejected with `400`. Resending with the same `quote_id` fails first with `400`, because the quote has already been used; the `409` applies when a new quote is sent with a repeated `request_id`.\n",
             "example": "req-7f3a9c20"
           },
           "documents": {
@@ -1251,7 +1985,7 @@
               "failed",
               "cancelled"
             ],
-            "description": "The status of the payout.\n",
+            "description": "The status of the payout.\n\n- `pending_approval` — the payout is waiting for a reviewer on your account to approve it. Only\n  used when payout approval is turned on for your account.\n- `queued` — the payout is waiting for enough balance to cover it. It moves on once funds arrive, or\n  fails with `QUEUE_EXPIRED` if they do not arrive in time.\n- `in_progress` — the payout has been accepted and is being processed or reviewed.\n- `action_required` — glomo needs more information before the payout can proceed. Respond to the\n  open RFI to continue.\n- `success` — the beneficiary has been paid. Terminal.\n- `failed` — the payout could not be completed; see `error_code`. Terminal.\n- `cancelled` — the payout was stopped before it was paid. Terminal.\n",
             "example": "success"
           },
           "destination_amount": {
@@ -1293,7 +2027,7 @@
           },
           "purpose_code": {
             "type": "string",
-            "description": "Purpose code for why you want to receive this payment\n",
+            "description": "Purpose code of this payout, from the fixed set of [payout purpose codes](/payout/purpose-codes).\n",
             "example": "S0017"
           },
           "mid_market_rate": {
@@ -1392,7 +2126,7 @@
             ],
             "readOnly": true,
             "maxLength": 64,
-            "description": "The client-provided unique identifier for this payout request. Can be used to look up the payout via `GET /v1/payouts?request_id=<your_request_id>`.\n",
+            "description": "The `request_id` you sent when creating this payout, at most 64 characters; `null` if you sent none. Look the payout up with `GET /v1/payouts?request_id=<your_request_id>`.\n",
             "example": "your-internal-id"
           },
           "payment_rail": {
@@ -1411,9 +2145,10 @@
               "fts",
               "sepa",
               "fps",
+              "npp",
               null
             ],
-            "description": "The payment rail used to settle this payout. Each local rail serves one corridor: `upi`, `imps`, `neft`, `rtgs` for `INR`; `ipp`, `fts` for `AED`; `sepa` for `EUR`; `fps` for `GBP`. `swift` is used for international transfers.\n",
+            "description": "The payment rail used to settle this payout. Each local rail serves one corridor: `upi`, `imps`, `neft`, `rtgs` for `INR`; `ipp`, `fts` for `AED`; `sepa` for `EUR`; `fps` for `GBP`; `npp` for `AUD`. `swift` is used for international transfers.\n",
             "example": "swift"
           },
           "invoice_number": {
@@ -1442,6 +2177,7 @@
               "QUOTE_EXPIRED",
               "QUEUE_EXPIRED",
               "PAYOUT_REJECTED",
+              "INSUFFICIENT_BALANCE",
               "INVALID_BENE_ACCOUNT_NUMBER",
               "INVALID_BENE_ACCOUNT_TYPE",
               "INVALID_BENE_IFSC",
@@ -1453,7 +2189,7 @@
               "NAME_MISMATCH",
               null
             ],
-            "description": "A machine-readable code describing why the payout failed or was cancelled. `null` unless the\npayout is in an error state. The accompanying `error_description` carries the human-readable text.\n\n| Code | Description |\n| ---- | ----------- |\n| `QUOTE_EXPIRED` | Quote has expired. Please create a new payout with a valid quote. |\n| `QUEUE_EXPIRED` | Payout stayed queued for 30 days because the balance did not cover it. No funds were held. |\n| `PAYOUT_REJECTED` | Payout was rejected by the bank. Please reach out to support. (default fallback) |\n| `INVALID_BENE_ACCOUNT_NUMBER` | Beneficiary account number is invalid. |\n| `INVALID_BENE_ACCOUNT_TYPE` | Beneficiary account type is invalid. |\n| `INVALID_BENE_IFSC` | Beneficiary IFSC code is invalid. |\n| `INVALID_VPA` | VPA/UPI address is invalid. |\n| `INVALID_BENE_NAME` | Beneficiary name is invalid. |\n| `INVALID_BENE_ADDRESS` | Beneficiary address or PIN/ZIP code is invalid. |\n| `INVALID_BENE_EMAIL` | Beneficiary email is invalid. |\n| `INVALID_BENE_CONTACT` | Beneficiary contact/mobile number is invalid. |\n| `NAME_MISMATCH` | Remitter and beneficiary names do not match for the selected purpose. |\n",
+            "description": "A machine-readable code describing why the payout failed or was cancelled. `null` unless the\npayout is in an error state. The accompanying `error_description` carries the human-readable text.\n\n| Code | Description |\n| ---- | ----------- |\n| `QUOTE_EXPIRED` | Quote has expired. Please create a new payout with a valid quote. |\n| `QUEUE_EXPIRED` | Payout stayed queued for 30 days because the balance did not cover it. No funds were held. |\n| `PAYOUT_REJECTED` | Payout was rejected by the bank. Please reach out to support. (default fallback) |\n| `INSUFFICIENT_BALANCE` | The balance no longer covered the payout when it came out of review. No funds were held. |\n| `INVALID_BENE_ACCOUNT_NUMBER` | Beneficiary account number is invalid. |\n| `INVALID_BENE_ACCOUNT_TYPE` | Beneficiary account type is invalid. |\n| `INVALID_BENE_IFSC` | Beneficiary IFSC code is invalid. |\n| `INVALID_VPA` | VPA/UPI address is invalid. |\n| `INVALID_BENE_NAME` | Beneficiary name is invalid. |\n| `INVALID_BENE_ADDRESS` | Beneficiary address or PIN/ZIP code is invalid. |\n| `INVALID_BENE_EMAIL` | Beneficiary email is invalid. |\n| `INVALID_BENE_CONTACT` | Beneficiary contact/mobile number is invalid. |\n| `NAME_MISMATCH` | Remitter and beneficiary names do not match for the selected purpose. |\n",
             "example": null
           },
           "error_description": {
@@ -1544,11 +2280,12 @@
               "string",
               "null"
             ],
-            "description": "The type of the payin. This is set only for payments associated to a payin.\n",
+            "description": "The type of the payin. This is set only for payments associated to a payin.\n\n- `payment_link` — the payment was made through a payment link.\n- `orders` — the payment was made against an order.\n- `add_funds` — the payment tops up your own glomo balance.\n",
             "enum": [
               "payment_link",
               "orders",
-              "add_funds"
+              "add_funds",
+              null
             ]
           },
           "subscription_id": {
@@ -1563,13 +2300,13 @@
             "type": "string",
             "readOnly": true,
             "enum": [
-              "success",
-              "failed",
-              "action_required",
               "in_progress",
-              "under_review"
+              "action_required",
+              "under_review",
+              "success",
+              "failed"
             ],
-            "description": "The status of the payment.\n"
+            "description": "The status of the payment.\n\n- `in_progress` — the payment has started and has not completed yet.\n- `action_required` — glomo needs more information before the payment can complete. Respond to the\n  open RFI to continue.\n- `under_review` — the information you submitted is being reviewed.\n- `success` — the payment completed. Terminal. Funds can still be held for compliance review; see\n  `compliance_status`.\n- `failed` — the payment did not complete. Terminal.\n"
           },
           "compliance_status": {
             "type": [
@@ -1581,9 +2318,10 @@
               "action_required",
               "under_review",
               "approved",
-              "rejected"
+              "rejected",
+              null
             ],
-            "description": "The compliance review status of the payment. Present only for payments that have been screened for sanctions or transaction-monitoring holds; `null` for payments that were not screened. This is separate from `status` — a payment can be `status: success` while `compliance_status` is `action_required`, meaning the payment itself completed but funds are held pending compliance review. See the `rfi` field for what's required when `action_required`.\n",
+            "description": "The compliance review status of the payment. Present only for payments that have been screened for\nsanctions or transaction-monitoring holds; `null` for payments that were not screened. This is\nseparate from `status` — a payment can be `status: success` while `compliance_status` is\n`action_required`, meaning the payment itself completed but funds are held pending compliance\nreview. See the `rfi` field for what's required when `action_required`.\n\n- `under_review` — the payment is being reviewed and its funds are held.\n- `action_required` — documents are needed before the review can finish. Respond to the open RFI.\n- `approved` — the review passed and the funds are released.\n- `rejected` — the payment did not pass the review.\n",
             "example": "action_required"
           },
           "rfi": {
@@ -1648,7 +2386,7 @@
           },
           "payment_currency": {
             "type": "string",
-            "format": "iso-4217, case-insensitive",
+            "format": "iso-4217",
             "description": "The currency in which the customer pays. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, AED.\n",
             "example": "AED"
           },
@@ -1660,7 +2398,7 @@
           },
           "converted_currency": {
             "type": "string",
-            "format": "iso-4217, case-insensitive",
+            "format": "iso-4217",
             "description": "The settlement currency after conversion. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
             "example": "USD"
           },
@@ -1672,7 +2410,7 @@
           },
           "requested_currency": {
             "type": "string",
-            "format": "iso-4217, case-insensitive",
+            "format": "iso-4217",
             "description": "The currency that was originally requested by the merchant. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
             "example": "USD"
           },
@@ -1684,7 +2422,7 @@
           },
           "purpose_code": {
             "type": "string",
-            "description": "The purpose code of the payment. This should match the purpose code of the payin.\n",
+            "description": "Purpose code recorded against this payment, from the fixed set of [payin purpose codes](/payin/purpose-codes). For a payment connected to a payin this is normally the payin's purpose code. It can be empty.\n",
             "example": "S0001"
           },
           "sender_name": {
@@ -1750,7 +2488,8 @@
             ],
             "enum": [
               "immediate",
-              "deferred"
+              "deferred",
+              null
             ],
             "description": "When merchant-borne fees are collected. `immediate` deducts fees up front; `deferred` invoices them later. `null` when not applicable.\n",
             "example": "immediate"
@@ -1799,7 +2538,7 @@
           },
           "country": {
             "type": "string",
-            "format": "iso-3166-1-alpha-3, case-insensitive",
+            "format": "iso-3166-1-alpha-3",
             "description": "The country of the sender. Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
             "example": "Ind"
           },
@@ -2275,7 +3014,7 @@
             "properties": {
               "name": {
                 "type": "string",
-                "description": "The name of the beneficiary. This is a required field.\n",
+                "description": "The name of the beneficiary. This is a required field. Reserved sandbox test values: `jexru7`, `nerqu8`, `havku9`, `dexru6` and `renvak4` (any letter case) force a sanctions-screening hit when a payout to this beneficiary is screened.\n",
                 "example": "ACME Corporation"
               },
               "type": {
@@ -2673,7 +3412,7 @@
               "rejected"
             ],
             "readOnly": true,
-            "description": "The current review status of the beneficiary.\n",
+            "description": "The current review status of the beneficiary.\n\n- `active` — the beneficiary can receive payouts.\n- `rejected` — the beneficiary did not pass review and cannot receive payouts. Terminal.\n",
             "example": "pending"
           },
           "documents": {
@@ -2752,7 +3491,7 @@
           },
           "name": {
             "type": "string",
-            "description": "The name of the customer.\n",
+            "description": "The name of the customer. Reserved sandbox test values: `jexru7`, `nerqu8`, `havku9`, `dexru6` and `renvak4` (any letter case) force a sanctions-screening hit whenever this customer is screened.\n",
             "example": "John Doe"
           },
           "customer_type": {
@@ -2833,6 +3572,1407 @@
             "format": "timestamp",
             "readOnly": true,
             "description": "Timestamp representing when the customer was last updated\n",
+            "example": "2021-06-01T12:00:00Z"
+          }
+        }
+      },
+      "Orders": {
+        "type": "object",
+        "x-tags": [
+          "Orders"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the order.\n",
+            "example": "order_678a4c88hpAjf"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "The unique identifier of customer linked to order.\n",
+            "example": "cust_E602dMzgjpDC"
+          },
+          "document_id": {
+            "type": "string",
+            "description": "The unique identifier of document linked to order. This document entity should contain the required documents to process incoming payments. Refer this [Document](#tag/Document) entity for more details.\n",
+            "example": "doc_nYUqLpuYQ0M8"
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "enum": [
+              "active",
+              "action_required",
+              "under_review",
+              "paid",
+              "failed",
+              "cancelled",
+              "expired"
+            ],
+            "description": "The status of the order.\n\n- `active` — the order has been created and can be paid.\n- `action_required` — glomo needs more information before the order can be paid. Respond to the\n  open RFI to continue.\n- `under_review` — the information you submitted is being reviewed. The order returns to `active` if\n  the review passes.\n- `paid` — the order has been paid in full. Terminal.\n- `failed` — the order could not be accepted, for example because the review did not pass. Terminal.\n- `cancelled` — the order was cancelled before it was paid. Terminal.\n- `expired` — the order passed its expiry time without being paid. Not always final: a payment that\n  was already under way when the order expired can still complete it, moving it to `paid`.\n",
+            "example": "active"
+          },
+          "currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP",
+              "AED",
+              "SGD",
+              "AUD"
+            ],
+            "description": "The currency the order is collected in, as an uppercase [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) code. Must be one of the listed values; the match is case-sensitive. `INR` is not accepted.\n",
+            "example": "USD"
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The amount you want to receive, a positive integer representing the smallest currency unit. For example, if the amount is $299.00, then pass 29900 in this field. In the case of three decimal currencies, such as KWD, BHD and OMR, to represent an amount of 295.991, pass the value as 295990. And in the case of zero decimal currencies such as JPY, for amount ￥295, pass the value as 295.\n",
+            "example": 1000
+          },
+          "purpose_code": {
+            "type": "string",
+            "description": "Why you are receiving this payment, as a code from a fixed set: see [Payin purpose codes](/payin/purpose-codes). This is not free text. Pass a listed code exactly, for example `P1401`; matching is exact and case-sensitive. Payins and payouts use different sets, so a payout code such as `S1401` is rejected here. An unrecognised code is rejected with `400 Bad Request`.\n\nOptional on orders. When omitted, Glomo applies your account's default payin purpose code if one has been configured.\n",
+            "example": "P1401"
+          },
+          "invoice_number": {
+            "type": "string",
+            "description": "Number/Id of the invoice submitted with order.\n",
+            "example": "RG12FF590"
+          },
+          "invoice_description": {
+            "type": "string",
+            "description": "Description about the invoice submitted with order\n",
+            "example": "Payment requested for services provided"
+          },
+          "invoice_amount": {
+            "type": "number",
+            "description": "The amount in cents for which invoice was generated. It can be more  than the amount requested in this order\n",
+            "example": 1000
+          },
+          "reference_number": {
+            "type": "string",
+            "description": "optional identifier to be sent for reconciliations\n",
+            "example": "R0001"
+          },
+          "price_id": {
+            "type": "string",
+            "description": "The unique identifier of 'Price' entity linked to the order. This is the referral fee for this order. Note: price_id is only applicable for platform businesses.\n",
+            "example": "price_E602dMzgjpDC"
+          },
+          "split_ids": {
+            "$ref": "#/components/schemas/SplitIds"
+          },
+          "product": {
+            "$ref": "#/components/schemas/Product"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          },
+          "bank_account_details": {
+            "type": "object",
+            "description": "Optional bank account details to associate with the customer for this order. When provided, the bank account will be linked to the customer and associated with this order. Either bic_primary or bic_secondary must be provided when including this field.\n",
+            "properties": {
+              "account_number": {
+                "type": "string",
+                "description": "The bank account number\n",
+                "example": "1234567890"
+              },
+              "bic_primary": {
+                "type": "string",
+                "description": "SWIFT code for the bank account. Will be null if not provided in the request.\n",
+                "example": "HDFCINBBDEL"
+              },
+              "bic_secondary": {
+                "type": "string",
+                "description": "Local routing code for the bank account like IFSC. Will be null if not provided in the request.\n",
+                "example": "HDFC0001097"
+              },
+              "bank_customer_id": {
+                "type": "string",
+                "description": "Optional bank customer identifier provided by the bank\n",
+                "example": "7189204715"
+              }
+            },
+            "required": [
+              "account_number"
+            ],
+            "example": {
+              "account_number": "REDACTED",
+              "bic_primary": "HDFCINBBDEL",
+              "bank_customer_id": "7189204715"
+            }
+          },
+          "payment_methods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "bank_transfer",
+                "pay_via_bank",
+                "card"
+              ]
+            },
+            "description": "Array of payment methods that should be available for the customer on the checkout page. This field allows you to control which payment options your customers can use to complete the payment. You can specify one or multiple payment methods in the array. Each value must be a payment method enabled on your account; any other value is rejected with a `400`. Omit the field to offer every payment method enabled on your account.\n",
+            "example": [
+              "card"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the order was created\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the order was last updated\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Your unique identifier for this order, used to reject duplicates. If an order with the same `request_id` already exists on your account, the request is rejected with `400` and the message `Order already exists for this request_id`; the existing order is not returned. Look it up with `GET /v1/orders?request_id=<your_request_id>`.\n",
+            "example": "unique_order_request_id_123"
+          }
+        }
+      },
+      "CreateOrderWithQuoteRequest": {
+        "type": "object",
+        "title": "CreateOrderWithQuoteRequest",
+        "additionalProperties": false,
+        "description": "Create an order against a previously generated quote (see `POST /quotes` with `resource: payin`). When supplied, the quote is the single source of truth for amount, currency, payment method and expiry. The locked fields (`amount`, `currency`, `price_id`, `payment_methods`) must NOT be sent — including any of them returns a `400 Bad Request`.\n",
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "description": "ID of a quote (from `POST /api/v1/quotes` with `resource: \"payin\"`) to bind this order to. When supplied, the quote is the single source of truth for amount, currency, payment method, and expiry.\n",
+            "example": "quote_3m4n5o6p7q"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "The unique identifier of customer linked to order.\n",
+            "example": "cust_E602dMzgjpDC"
+          },
+          "purpose_code": {
+            "type": "string",
+            "description": "Why you are receiving this payment, as a code from a fixed set: see [Payin purpose codes](/payin/purpose-codes). This is not free text. Pass a listed code exactly, for example `P1401`; matching is exact and case-sensitive. Payins and payouts use different sets, so a payout code such as `S1401` is rejected here. An unrecognised code is rejected with `400 Bad Request`.\n\nOptional on orders. When omitted, Glomo applies your account's default payin purpose code if one has been configured.\n",
+            "example": "P1401"
+          },
+          "document_id": {
+            "type": "string",
+            "description": "The unique identifier of document linked to order. This document entity should contain the required documents to process incoming payments. Refer this [Document](#tag/Document) entity for more details.\n",
+            "example": "doc_nYUqLpuYQ0M8"
+          },
+          "invoice_number": {
+            "type": "string",
+            "description": "Number/Id of the invoice submitted with order.\n",
+            "example": "RG12FF590"
+          },
+          "invoice_description": {
+            "type": "string",
+            "description": "Description about the invoice submitted with order.\n",
+            "example": "Payment requested for services provided"
+          },
+          "invoice_amount": {
+            "type": "number",
+            "description": "The amount in cents for which invoice was generated. It can be more than the amount requested in this order.\n",
+            "example": 1000
+          },
+          "reference_number": {
+            "type": "string",
+            "description": "optional identifier to be sent for reconciliations.\n",
+            "example": "R0001"
+          },
+          "product": {
+            "$ref": "#/components/schemas/Product"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          },
+          "bank_account_details": {
+            "type": "object",
+            "description": "Optional bank account details to associate with the customer for this order. When provided, the bank account will be linked to the customer and associated with this order. Either bic_primary or bic_secondary must be provided when including this field.\n",
+            "properties": {
+              "account_number": {
+                "type": "string",
+                "description": "The bank account number\n",
+                "example": "1234567890"
+              },
+              "bic_primary": {
+                "type": "string",
+                "description": "SWIFT code for the bank account. Will be null if not provided in the request.\n",
+                "example": "HDFCINBBDEL"
+              },
+              "bic_secondary": {
+                "type": "string",
+                "description": "Local routing code for the bank account like IFSC. Will be null if not provided in the request.\n",
+                "example": "HDFC0001097"
+              },
+              "bank_customer_id": {
+                "type": "string",
+                "description": "Optional bank customer identifier provided by the bank\n",
+                "example": "7189204715"
+              }
+            },
+            "required": [
+              "account_number"
+            ],
+            "example": {
+              "account_number": "REDACTED",
+              "bic_primary": "HDFCINBBDEL",
+              "bank_customer_id": "7189204715"
+            }
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Your unique identifier for this order, used to reject duplicates. If an order with the same `request_id` already exists on your account, the request is rejected with `400` and the message `Order already exists for this request_id`; the existing order is not returned. Look it up with `GET /v1/orders?request_id=<your_request_id>`. Resending with the same `quote_id` fails first with `400`, because the quote has already been used.\n",
+            "example": "unique_order_request_id_123"
+          }
+        }
+      },
+      "OrderResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Orders"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "readOnly": true,
+                "description": "The unique identifier for the order.\n",
+                "example": "order_678a4c88hpAjf"
+              },
+              "status": {
+                "type": "string",
+                "readOnly": true,
+                "enum": [
+                  "active",
+                  "action_required",
+                  "under_review",
+                  "paid",
+                  "failed",
+                  "cancelled",
+                  "expired"
+                ],
+                "description": "The status of the order.\n\n- `active` — the order has been created and can be paid.\n- `action_required` — glomo needs more information before the order can be paid. Respond to the\n  open RFI to continue.\n- `under_review` — the information you submitted is being reviewed. The order returns to `active` if\n  the review passes.\n- `paid` — the order has been paid in full. Terminal.\n- `failed` — the order could not be accepted, for example because the review did not pass. Terminal.\n- `cancelled` — the order was cancelled before it was paid. Terminal.\n- `expired` — the order passed its expiry time without being paid. Not always final: a payment that\n  was already under way when the order expired can still complete it, moving it to `paid`.\n",
+                "example": "active"
+              },
+              "rfi_documents": {
+                "type": "array",
+                "readOnly": true,
+                "description": "List of required documents for RFI (Request for Information). This field is only present when the order status is 'action_required', indicating that sanction screening has been triggered and additional documents are required to proceed with the payment.\n",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rfi_doc_id": {
+                      "type": "string",
+                      "description": "Unique identifier for the required RFI document\n",
+                      "example": "rfidoc_123"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Name/type of the required document\n",
+                      "example": "Passport"
+                    }
+                  },
+                  "required": [
+                    "rfi_doc_id",
+                    "name"
+                  ]
+                },
+                "example": [
+                  {
+                    "rfi_doc_id": "rfidoc_123",
+                    "name": "REDACTED"
+                  },
+                  {
+                    "rfi_doc_id": "rfidoc_456",
+                    "name": "REDACTED"
+                  }
+                ]
+              },
+              "payment_methods": {
+                "type": "array",
+                "readOnly": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "bank_transfer",
+                    "pay_via_bank",
+                    "card"
+                  ]
+                },
+                "description": "Array of payment methods that should be available for the customer on the checkout page. This field allows you to control which payment options your customers can use to complete the payment. You can specify one or multiple payment methods in the array.\n",
+                "example": [
+                  "card"
+                ]
+              },
+              "bank_account_details": {
+                "type": "object",
+                "readOnly": true,
+                "description": "Bank account details associated with the customer for this order. If provided in the request, all fields will be returned. If bic_primary or bic_secondary was not provided in the request, they will be null in the response.\n",
+                "properties": {
+                  "account_number": {
+                    "type": "string",
+                    "description": "The bank account number\n",
+                    "example": "1234567890"
+                  },
+                  "bic_primary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "SWIFT code for the bank account. Will be null if not provided in the request.\n",
+                    "example": "HDFCINBBDEL"
+                  },
+                  "bic_secondary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Local routing code for the bank account like IFSC. Will be null if not provided in the request.\n",
+                    "example": "HDFC0001097"
+                  },
+                  "bank_customer_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Bank customer identifier provided by the bank. Will be null if not provided in the request.\n",
+                    "example": "7189204715"
+                  }
+                },
+                "example": {
+                  "account_number": "REDACTED",
+                  "bic_primary": "HDFCINBBDEL",
+                  "bic_secondary": null,
+                  "bank_customer_id": "7189204715"
+                }
+              },
+              "created_at": {
+                "type": "string",
+                "format": "timestamp",
+                "readOnly": true,
+                "description": "Timestamp representing when the order was created\n",
+                "example": "2021-06-01T12:00:00Z"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "timestamp",
+                "readOnly": true,
+                "description": "Timestamp representing when the order was last updated\n",
+                "example": "2021-06-01T12:00:00Z"
+              }
+            }
+          }
+        ]
+      },
+      "Refund": {
+        "type": "object",
+        "x-tags": [
+          "Refund"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the refund.\n",
+            "example": "refund_6776d57dnbTWj"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "The unique identifier of customer linked to refund.\n",
+            "example": "cust_E602dMzgjpDC"
+          },
+          "payment_id": {
+            "type": "string",
+            "description": "The unique identifier of payment linked to refund.\n",
+            "example": "payt_E602dMzgjpDC"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "Requested By Customer",
+              "Fraudulent",
+              "Duplicate",
+              "Others",
+              "Refunded For Subscription Verification",
+              "Refunded For Subscription Card Update"
+            ],
+            "description": "The reason for the refund. For a refund you created, this is the `reason` you sent.\n\nglomo also refunds some payments itself, and those refunds appear in your refund list with one of\ntwo further reasons that you cannot send:\n\n- `Refunded For Subscription Verification` — the refund of a small charge used to verify the card\n  when a subscription was set up.\n- `Refunded For Subscription Card Update` — the refund of a small charge used to verify a new card\n  when the card on a subscription was replaced.\n",
+            "example": "Requested By Customer"
+          },
+          "fees": {
+            "type": "object",
+            "description": "The fees charged for the refund.\n",
+            "properties": {
+              "fx_fees": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The foreign exchange fee charged for the refund.\n"
+              },
+              "txn_fees": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The transaction fee charged for the refund.\n"
+              }
+            }
+          },
+          "balance_used": {
+            "type": "object",
+            "description": "The balance deducted to process the refund.\n",
+            "properties": {
+              "currency": {
+                "type": "string",
+                "format": "iso-4217",
+                "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format.\n",
+                "example": "USD"
+              },
+              "amount": {
+                "type": "integer",
+                "description": "The amount deducted in cents.\n",
+                "example": 1000
+              }
+            }
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "description": "The document attached to the refund.\n",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "readOnly": true,
+                      "description": "The unique identifier for the Document.\n",
+                      "example": "doc_nYUqLpuYQ0M8"
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "The type of the document.\n",
+                      "example": "rfi"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "uploaded",
+                        "approved",
+                        "rejected"
+                      ],
+                      "description": "The status of the document.\n",
+                      "example": "pending"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "description": "The document required to be uploaded to respond to rfi.\n",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "readOnly": true,
+                      "description": "The unique identifier for the Document.\n",
+                      "example": null
+                    },
+                    "rfi_doc_id": {
+                      "type": "string",
+                      "description": "The identifier that needs to be sent when responding to rfi.\n",
+                      "example": "rfidoc_nYUqLpuYQ0M8"
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "The type of the document.\n",
+                      "example": "rfi"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "uploaded",
+                        "approved",
+                        "rejected"
+                      ],
+                      "description": "The status of the document.\n",
+                      "example": "pending"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "enum": [
+              "in_progress",
+              "under_review",
+              "action_required",
+              "success",
+              "failed",
+              "cancelled"
+            ],
+            "description": "The status of the refund.\n\n- `in_progress` — the refund has been accepted and is being sent back to the customer.\n- `under_review` — the refund is being reviewed by glomo before it is processed.\n- `action_required` — glomo needs more information before the refund can proceed. Respond to the\n  open RFI to continue.\n- `success` — the refund has been paid out. Terminal.\n- `failed` — the refund could not be completed. Terminal.\n- `cancelled` — the refund was stopped before it was paid out. Terminal.\n",
+            "example": "success"
+          },
+          "currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The amount you want to receive in cents. For example, 1000 cents is $10.00.  The currency is determined by the `currency` field. `Cents` is a general  term for the smallest unit of currency in any currency. It does not  necessarily mean USD cents.\n",
+            "example": 1000
+          },
+          "utr": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The Unique Transaction Reference (UTR) number associated with the refund.\n",
+            "example": "UTR123456789"
+          },
+          "partial_refund": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "Indicates whether the refund is a partial refund.\n",
+            "example": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the refund was created\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the refund was last updated\n",
+            "example": "2021-06-01T12:00:00Z"
+          }
+        }
+      },
+      "PaymentLink": {
+        "type": "object",
+        "x-tags": [
+          "payment_link"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the payment link.\n",
+            "example": "payin_678a4c88hpAjf"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "The unique identifier of customer linked to payment_link.\n",
+            "example": "cust_E602dMzgjpDC"
+          },
+          "document_id": {
+            "type": "string",
+            "description": "The unique identifier of document linked to payment_link. This document entity should contain the required documents to process incoming payments. Refer this [Document](#tag/Document) entity for more details.\n",
+            "example": "doc_nYUqLpuYQ0M8"
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "enum": [
+              "active",
+              "action_required",
+              "under_review",
+              "paid",
+              "failed",
+              "cancelled",
+              "expired"
+            ],
+            "description": "The status of the payment link.\n\n- `active` — the payment link has been created and can be paid.\n- `action_required` — glomo needs more information before the payment link can be paid. Respond to the\n  open RFI to continue.\n- `under_review` — the information you submitted is being reviewed. The payment link returns to `active` if\n  the review passes.\n- `paid` — the payment link has been paid in full. Terminal.\n- `failed` — the payment link could not be accepted, for example because the review did not pass. Terminal.\n- `cancelled` — the payment link was cancelled before it was paid. Terminal.\n- `expired` — the payment link passed its expiry time without being paid. Not always final: a payment that\n  was already under way when the payment link expired can still complete it, moving it to `paid`.\n",
+            "example": "active"
+          },
+          "payment_methods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "bank_transfer",
+                "pay_via_bank",
+                "card"
+              ]
+            },
+            "description": "Array of payment methods that should be available for the customer on the checkout page. This field allows you to control which payment options your customers can use to complete the payment. You can specify one or multiple payment methods in the array. A listed method that is not set up on your account is ignored rather than rejected.\n",
+            "example": [
+              "card"
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP",
+              "AED",
+              "SGD",
+              "AUD"
+            ],
+            "description": "The currency the payment link is collected in, as an uppercase [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) code. Must be one of the listed values; the match is case-sensitive. `INR` is not accepted.\n",
+            "example": "USD"
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The amount you want to receive, a positive integer representing the smallest currency unit. For example, if the amount is $299.00, then pass 29900 in this field. In the case of three decimal currencies, such as KWD, BHD and OMR, to represent an amount of 295.991, pass the value as 295990. And in the case of zero decimal currencies such as JPY, for amount ￥295, pass the value as 295.\n",
+            "example": 1000
+          },
+          "purpose_code": {
+            "type": "string",
+            "description": "Why you are receiving this payment, as a code from a fixed set: see [Payin purpose codes](/payin/purpose-codes). This is not free text. Pass a listed code exactly, for example `P1401`; matching is exact and case-sensitive. Payins and payouts use different sets, so a payout code such as `S1401` is rejected here. An unrecognised code is rejected with `400 Bad Request`.\n\nRequired, unless Glomo has configured a default payin purpose code on your account, in which case an omitted value falls back to that default.\n",
+            "example": "P1401"
+          },
+          "invoice_number": {
+            "type": "string",
+            "description": "Number/Id of the invoice submitted with payment_link.\n",
+            "example": "RG12FF590"
+          },
+          "invoice_description": {
+            "type": "string",
+            "description": "Description about the invoice submitted with payment_link\n",
+            "example": "Payment requested for services provided"
+          },
+          "reference_number": {
+            "type": "string",
+            "description": "optional identifier to be sent for reconciliations\n",
+            "example": "R0001"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "timestamp",
+            "description": "Date when the payment_link will expire. Expiry can not be less than or equal  to current date and can be upto 6 months in future.\n",
+            "example": "2025-02-15T00:00:00.000Z"
+          },
+          "last_reminder_sent_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Last time when the customer was reminded to complete the payment by  visiting the link\n",
+            "example": "2024-09-13T06:32:34.340Z"
+          },
+          "invoice_amount": {
+            "type": "number",
+            "description": "The amount in cents for which invoice was generated. It can be more  than the amount requested in this payment_link\n",
+            "example": 1000
+          },
+          "payment_link": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Sharable link which should be shared with customer you want to receive  money from. ``` This link gets generated only after the payin has been reviewed and moved to in_progress ```\n",
+            "example": "https://staging-api.glomopay-eng.com/v1/payin/pl/8f31597d-e085-497a-b80f-ae97ea9422a0"
+          },
+          "notify_customer": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to notify the customer via email when the payment link is created. Defaults to `true`. Set to `false` to suppress the notification email.\n",
+            "example": true
+          },
+          "reminder_frequency": {
+            "type": "number",
+            "description": "The frequency at which you want to remind customers, valid values are 1(remind everyday), 2(remind every alternate day), 7(remind every week), 14(remind every alternate week).\n",
+            "example": 7
+          },
+          "price_id": {
+            "type": "string",
+            "description": "The unique identifier of 'Price' entity linked to the payment link. This is the referral fee for this payment link. Note: price_id is only applicable for platform businesses.\n",
+            "example": "price_E602dMzgjpDC"
+          },
+          "split_ids": {
+            "$ref": "#/components/schemas/SplitIds"
+          },
+          "product": {
+            "$ref": "#/components/schemas/Product"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the payment_link was created\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the payment_link was last updated\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          },
+          "bank_account_details": {
+            "type": "object",
+            "description": "Optional bank account details to associate with the customer for this payment link. When provided, the bank account will be linked to the customer and associated with this payment link. Either bic_primary or bic_secondary must be provided when including this field.\n",
+            "properties": {
+              "account_number": {
+                "type": "string",
+                "description": "The bank account number\n",
+                "example": "1234567890"
+              },
+              "bic_primary": {
+                "type": "string",
+                "description": "SWIFT code for the bank account. Will be null if not provided in the request.\n",
+                "example": "HDFCINBBDEL"
+              },
+              "bic_secondary": {
+                "type": "string",
+                "description": "Local routing code for the bank account like IFSC. Will be null if not provided in the request.\n",
+                "example": "HDFC0001097"
+              },
+              "bank_customer_id": {
+                "type": "string",
+                "description": "Optional bank customer identifier provided by the bank\n",
+                "example": "7189204715"
+              }
+            },
+            "required": [
+              "account_number"
+            ],
+            "example": {
+              "account_number": "REDACTED",
+              "bic_primary": "HDFCINBBDEL",
+              "bank_customer_id": "7189204715"
+            }
+          }
+        }
+      },
+      "CreatePaymentLinkWithQuoteRequest": {
+        "type": "object",
+        "title": "CreatePaymentLinkWithQuoteRequest",
+        "additionalProperties": false,
+        "description": "Create a payment link against a previously generated quote (see `POST /quotes` with `resource: payin`). When supplied, the quote is the single source of truth for amount, currency, payment method and expiry. The locked fields (`amount`, `currency`, `expires_at`, `price_id`, `payment_methods`) must NOT be sent — including any of them returns a `400 Bad Request`.\n",
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "description": "ID of a quote (from `POST /api/v1/quotes` with `resource: \"payin\"`) to bind this payment link to. When supplied, the quote is the single source of truth for amount, currency, payment method, and expiry.\n",
+            "example": "quote_3m4n5o6p7q"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "The unique identifier of customer linked to payment_link.\n",
+            "example": "cust_E602dMzgjpDC"
+          },
+          "purpose_code": {
+            "type": "string",
+            "description": "Why you are receiving this payment, as a code from a fixed set: see [Payin purpose codes](/payin/purpose-codes). This is not free text. Pass a listed code exactly, for example `P1401`; matching is exact and case-sensitive. Payins and payouts use different sets, so a payout code such as `S1401` is rejected here. An unrecognised code is rejected with `400 Bad Request`.\n\nRequired, unless Glomo has configured a default payin purpose code on your account, in which case an omitted value falls back to that default.\n",
+            "example": "P1401"
+          },
+          "document_id": {
+            "type": "string",
+            "description": "The unique identifier of document linked to payment_link. This document entity should contain the required documents to process incoming payments. Refer this [Document](#tag/Document) entity for more details.\n",
+            "example": "doc_nYUqLpuYQ0M8"
+          },
+          "invoice_number": {
+            "type": "string",
+            "description": "Number/Id of the invoice submitted with payment_link.\n",
+            "example": "RG12FF590"
+          },
+          "invoice_description": {
+            "type": "string",
+            "description": "Description about the invoice submitted with payment_link.\n",
+            "example": "Payment requested for services provided"
+          },
+          "invoice_amount": {
+            "type": "number",
+            "description": "The amount in cents for which invoice was generated. It can be more than the amount requested in this payment_link.\n",
+            "example": 1000
+          },
+          "reference_number": {
+            "type": "string",
+            "description": "optional identifier to be sent for reconciliations.\n",
+            "example": "R0001"
+          },
+          "notify_customer": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to notify the customer via email when the payment link is created. Defaults to `true`. Set to `false` to suppress the notification email.\n",
+            "example": true
+          },
+          "reminder_frequency": {
+            "type": "number",
+            "description": "The frequency at which you want to remind customers, valid values are 1(remind everyday), 2(remind every alternate day), 7(remind every week), 14(remind every alternate week).\n",
+            "example": 7
+          },
+          "product": {
+            "$ref": "#/components/schemas/Product"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          },
+          "bank_account_details": {
+            "type": "object",
+            "description": "Optional bank account details to associate with the customer for this payment link. When provided, the bank account will be linked to the customer and associated with this payment link. Either bic_primary or bic_secondary must be provided when including this field.\n",
+            "properties": {
+              "account_number": {
+                "type": "string",
+                "description": "The bank account number\n",
+                "example": "1234567890"
+              },
+              "bic_primary": {
+                "type": "string",
+                "description": "SWIFT code for the bank account. Will be null if not provided in the request.\n",
+                "example": "HDFCINBBDEL"
+              },
+              "bic_secondary": {
+                "type": "string",
+                "description": "Local routing code for the bank account like IFSC. Will be null if not provided in the request.\n",
+                "example": "HDFC0001097"
+              },
+              "bank_customer_id": {
+                "type": "string",
+                "description": "Optional bank customer identifier provided by the bank\n",
+                "example": "7189204715"
+              }
+            },
+            "required": [
+              "account_number"
+            ],
+            "example": {
+              "account_number": "REDACTED",
+              "bic_primary": "HDFCINBBDEL",
+              "bank_customer_id": "7189204715"
+            }
+          }
+        }
+      },
+      "PaymentLinkResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PaymentLink"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "readOnly": true,
+                "description": "The unique identifier for the payment link.\n",
+                "example": "payin_678a4c88hpAjf"
+              },
+              "status": {
+                "type": "string",
+                "readOnly": true,
+                "enum": [
+                  "active",
+                  "action_required",
+                  "under_review",
+                  "paid",
+                  "failed",
+                  "cancelled",
+                  "expired"
+                ],
+                "description": "The status of the payment link.\n\n- `active` — the payment link has been created and can be paid.\n- `action_required` — glomo needs more information before the payment link can be paid. Respond to the\n  open RFI to continue.\n- `under_review` — the information you submitted is being reviewed. The payment link returns to `active` if\n  the review passes.\n- `paid` — the payment link has been paid in full. Terminal.\n- `failed` — the payment link could not be accepted, for example because the review did not pass. Terminal.\n- `cancelled` — the payment link was cancelled before it was paid. Terminal.\n- `expired` — the payment link passed its expiry time without being paid. Not always final: a payment that\n  was already under way when the payment link expired can still complete it, moving it to `paid`.\n",
+                "example": "active"
+              },
+              "rfi_documents": {
+                "type": "array",
+                "readOnly": true,
+                "description": "List of required documents for RFI (Request for Information). This field is only present when the payment link status is 'action_required', indicating that sanction screening has been triggered and additional documents are required to proceed with the payment link.\n",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rfi_doc_id": {
+                      "type": "string",
+                      "description": "Unique identifier for the required RFI document\n",
+                      "example": "rfidoc_123"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Name/type of the required document\n",
+                      "example": "Passport"
+                    }
+                  },
+                  "required": [
+                    "rfi_doc_id",
+                    "name"
+                  ]
+                },
+                "example": [
+                  {
+                    "rfi_doc_id": "rfidoc_123",
+                    "name": "REDACTED"
+                  },
+                  {
+                    "rfi_doc_id": "rfidoc_456",
+                    "name": "REDACTED"
+                  }
+                ]
+              },
+              "payment_link": {
+                "type": "string",
+                "readOnly": true,
+                "description": "Sharable link which should be shared with customer you want to receive money from. ``` This link gets generated only after the payin has been reviewed and moved to in_progress ```\n",
+                "example": "https://staging-api.glomopay-eng.com/v1/payin/pl/8f31597d-e085-497a-b80f-ae97ea9422a0"
+              },
+              "last_reminder_sent_at": {
+                "type": "string",
+                "format": "timestamp",
+                "readOnly": true,
+                "description": "Last time when the customer was reminded to complete the payment by visiting the link\n",
+                "example": "2024-09-13T06:32:34.340Z"
+              },
+              "payment_methods": {
+                "type": "array",
+                "readOnly": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "bank_transfer",
+                    "pay_via_bank",
+                    "card"
+                  ]
+                },
+                "description": "Array of payment methods that should be available for the customer on the checkout page. This field allows you to control which payment options your customers can use to complete the payment. You can specify one or multiple payment methods in the array.\n",
+                "example": [
+                  "card"
+                ]
+              },
+              "bank_account_details": {
+                "type": "object",
+                "readOnly": true,
+                "description": "Bank account details associated with the customer for this payment link. If provided in the request, all fields will be returned. If bic_primary or bic_secondary was not provided in the request, they will be null in the response.\n",
+                "properties": {
+                  "account_number": {
+                    "type": "string",
+                    "description": "The bank account number\n",
+                    "example": "1234567890"
+                  },
+                  "bic_primary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "SWIFT code for the bank account. Will be null if not provided in the request.\n",
+                    "example": "HDFCINBBDEL"
+                  },
+                  "bic_secondary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Local routing code for the bank account like IFSC. Will be null if not provided in the request.\n",
+                    "example": "HDFC0001097"
+                  },
+                  "bank_customer_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Bank customer identifier provided by the bank. Will be null if not provided in the request.\n",
+                    "example": "7189204715"
+                  }
+                },
+                "example": {
+                  "account_number": "REDACTED",
+                  "bic_primary": "HDFCINBBDEL",
+                  "bic_secondary": null,
+                  "bank_customer_id": "7189204715"
+                }
+              },
+              "created_at": {
+                "type": "string",
+                "format": "timestamp",
+                "readOnly": true,
+                "description": "Timestamp representing when the payment_link was created\n",
+                "example": "2021-06-01T12:00:00Z"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "timestamp",
+                "readOnly": true,
+                "description": "Timestamp representing when the payment_link was last updated\n",
+                "example": "2021-06-01T12:00:00Z"
+              },
+              "notes": {
+                "$ref": "#/components/schemas/Notes"
+              }
+            }
+          }
+        ]
+      },
+      "Document": {
+        "type": "object",
+        "x-tags": [
+          "Document"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the Document.\n",
+            "example": "doc_nYUqLpuYQ0M8"
+          },
+          "document_name": {
+            "type": "string",
+            "description": "The name of document\n",
+            "example": "invoice"
+          },
+          "file_name": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The name of the file you uploaded.\n",
+            "example": "invoice_BC8tFdE.pdf"
+          },
+          "preview_url": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The URL to preview the document.\n",
+            "example": "https://glomopay-service-staging-documents.s3.ap-south-1.amazonaws.com/12345_invoice"
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The status of file you uploaded. Values can be uploaded, approved and rejected.\n",
+            "example": "uploaded"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the document was created\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the document was last updated\n",
+            "example": "2021-06-01T12:00:00Z"
+          }
+        }
+      },
+      "CreateSubscriptionRequest": {
+        "type": "object",
+        "description": "Request payload for creating a new subscription",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Unique identifier of the customer associated with this subscription.",
+            "example": "cust_5JU9yv0lGSUP"
+          },
+          "product_name": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Name of the product being subscribed to.",
+            "example": "ShieldGuard Insurance"
+          },
+          "product_description": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Description of the product.",
+            "example": "Flexible monthly insurance for belongings travel and digital assets easy to manage"
+          },
+          "plan_name": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Name of the subscription plan.",
+            "example": "ShieldGuard Lite"
+          },
+          "plan_description": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Description of the subscription plan.",
+            "example": "Simple, monthly insurance plan that covers your basic belongings and key digital assets"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "interval_type": {
+            "$ref": "#/components/schemas/IntervalType"
+          },
+          "interval_count": {
+            "$ref": "#/components/schemas/IntervalCount"
+          },
+          "billing_cycles": {
+            "type": "integer",
+            "minimum": 2,
+            "description": "Total number of billing cycles for the subscription. Required for regular subscriptions, must not be provided for 'as_presented' subscriptions.\nA subscription can have a lifetime of 30 years.\nMaximum billing cycles therefore depend on interval:\n- Monthly (interval_type='month', interval_count=1): max 360 cycles\n- Quarterly (interval_type='month', interval_count=3): max 120 cycles\n- Half-yearly (interval_type='month', interval_count=6): max 60 cycles\n- Yearly (interval_type='year', interval_count=1): max 30 cycles\n",
+            "example": 12
+          },
+          "max_amount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum allowed amount per payment for 'as_presented' subscriptions. Required when interval_type is 'as_presented', must not be provided for regular subscriptions.\nSubsequent payments on the subscription cannot exceed this amount.\n",
+            "example": 5000
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Start date of the subscription in UTC timezone and ISO 8601 format (YYYY-MM-DD). Must be today or in the future.\nRequired for regular subscriptions, must not be provided for 'as_presented' subscriptions.\n",
+            "example": "2025-01-01"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date",
+            "description": "Expiration date for the subscription payment link in UTC timezone and ISO 8601 format (YYYY-MM-DD). Must be today or later, and no more than one calendar month after today (UTC); otherwise the request is rejected with `400`. It is not compared with `start_date`.\n",
+            "example": "2025-01-07"
+          },
+          "notify_customer": {
+            "type": "boolean",
+            "description": "Whether to send notification e-mails to customers for subscription lifecycle changes.",
+            "example": true
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          },
+          "reference_number": {
+            "type": "string",
+            "description": "optional identifier to be sent for reconciliations\n",
+            "example": "R0001"
+          },
+          "starts_with_first_payment": {
+            "type": "boolean",
+            "description": "Whether the subscription payment schedule should get synchronized with the first payment.",
+            "example": true
+          },
+          "split_ids": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SplitIds"
+              }
+            ],
+            "description": "Supported only when `interval_type` is `as_presented`. Sending `split_ids` on a fixed-frequency subscription returns a `400 Bad Request`, because a fixed-frequency plan auto debits without you and so has no point at which to pass a split or replace one that goes stale.\n\nThe declaration applies to the first payment, and to every subsequent auto debit that does not pass `split_ids` of its own. See [Create a payment](#tag/Payment) for the auto debit override.\n"
+          }
+        },
+        "required": [
+          "customer_id",
+          "product_name",
+          "product_description",
+          "amount",
+          "currency",
+          "interval_type",
+          "expires_at",
+          "notify_customer",
+          "starts_with_first_payment"
+        ]
+      },
+      "CreateSubscriptionResponse": {
+        "x-tags": [
+          "Subscription"
+        ],
+        "type": "object",
+        "description": "Subscription resource represents a recurring billing agreement for a customer",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the subscription.",
+            "example": "sub_5JU9yv0lGSUP"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "Unique identifier of the customer associated with this subscription.",
+            "example": "cust_5JU9yv0lGSUP"
+          },
+          "product_name": {
+            "type": "string",
+            "description": "Name of the product being subscribed to.",
+            "example": "ShieldGuard Insurance"
+          },
+          "product_description": {
+            "type": "string",
+            "description": "Description of the product.",
+            "example": "Flexible, monthly insurance for belongings, travel, and digital assets, easy to manage"
+          },
+          "plan_name": {
+            "type": "string",
+            "description": "Name of the subscription plan.",
+            "example": "ShieldGuard Lite"
+          },
+          "plan_description": {
+            "type": "string",
+            "description": "Description of the subscription plan.",
+            "example": "Simple, monthly insurance plan that covers your basic belongings and key digital assets"
+          },
+          "reference_number": {
+            "type": "string",
+            "description": "optional identifier to be sent for reconciliations\n",
+            "example": "R0001"
+          },
+          "status": {
+            "type": "string",
+            "description": "Current status of the subscription.\n\n- `created` — the subscription exists and is waiting for the customer to authorise it.\n- `authorized` — the customer has authorised the subscription and it has not become `active` yet.\n- `active` — the subscription is charging on its schedule.\n- `paused` — you paused the subscription. Resume it to continue charging.\n- `halted` — charging stopped automatically; `halt_reason` says why. It returns to `active` after\n  its next successful payment, for example once the customer updates the card. The resume endpoint\n  applies only to `paused` subscriptions.\n- `action_required` — glomo needs more information before the subscription can proceed. Respond to\n  the open RFI to continue.\n- `under_review` — the information you submitted is being reviewed. The subscription becomes\n  `active` if the review passes and `failed` if it does not.\n- `completed` — every billing cycle has been charged. Terminal.\n- `cancelled` — the subscription was cancelled. Terminal.\n- `expired` — the customer did not authorise the subscription in time. Terminal.\n- `failed` — the subscription could not be set up, or did not pass review. Terminal.\n",
+            "enum": [
+              "created",
+              "authorized",
+              "active",
+              "paused",
+              "halted",
+              "action_required",
+              "under_review",
+              "completed",
+              "cancelled",
+              "expired",
+              "failed"
+            ],
+            "example": "active"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          },
+          "interval_type": {
+            "$ref": "#/components/schemas/IntervalType"
+          },
+          "interval_count": {
+            "$ref": "#/components/schemas/IntervalCount"
+          },
+          "billing_cycles": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Total number of billing cycles for the subscription. Null for 'as_presented' subscriptions.",
+            "example": 12
+          },
+          "max_amount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Maximum allowed amount per payment. Present only for 'as_presented' subscriptions, null for regular subscriptions.",
+            "example": 5000
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Start date of the subscription in UTC timezone and ISO 8601 format (YYYY-MM-DD).",
+            "example": "2025-01-01"
+          },
+          "end_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "The date on which the subscription ends in UTC timezone and ISO 8601 format (YYYY-MM-DD).",
+            "example": "2025-12-01"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date",
+            "description": "Expiration date for the subscription payment link in UTC timezone and ISO 8601 format (YYYY-MM-DD).",
+            "example": "2025-01-07"
+          },
+          "next_payment_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "Date of the next scheduled payment in UTC timezone and ISO 8601 format (YYYY-MM-DD).",
+            "example": "2025-02-01"
+          },
+          "subscription_link_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL for the subscription payment page. Your customer can use this URL to make the first payment and activate the subscription. The path is `/subscription-links/{id}`; in sandbox the URL ends with `?sandbox=true`.\n",
+            "example": "https://checkout.glomopay.com/subscription-links/sub_5JU9yv0lGSUP"
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "Date when the subscription was cancelled in UTC timezone and ISO 8601 format (YYYY-MM-DD). This field is null unless the subscription status is 'cancelled'.",
+            "example": "2025-01-15"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          }
+        },
+        "required": [
+          "id",
+          "customer_id",
+          "product_name",
+          "product_description",
+          "status",
+          "amount",
+          "currency",
+          "interval_type",
+          "start_date",
+          "expires_at",
+          "subscription_link_url"
+        ]
+      },
+      "Price": {
+        "type": "object",
+        "x-tags": [
+          "Price"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the price. Pass this value as `price_id` when creating a payin or an order to apply this referral fee to it.\n",
+            "example": "price_DdWp_HUbOnlg"
+          },
+          "pricing_type": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "percentage"
+            ],
+            "description": "The type of pricing to be applied.\n",
+            "example": "fixed"
+          },
+          "fees_amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The amount that will be deducted from your balance for this pricing. A positive integer representing the smallest currency unit. For example, if the amount is $299.00, then pass 29900 in this field. In the case of three decimal currencies, such as KWD, BHD and OMR, to represent an amount of 295.991, pass the value as 295990. And in the case of zero decimal currencies such as JPY, for amount ￥295, pass the value as 295\n",
+            "example": 1000
+          },
+          "fees_currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format.\n",
+            "example": "USD"
+          },
+          "bps": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Basis points for the pricing.\n",
+            "example": 1000
+          },
+          "set_as_default": {
+            "type": "boolean",
+            "description": "Set this pricing as default for the business. Overrides the previously set default if set to 'true'.\n",
+            "example": "true"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the payin was created\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the payin was last updated\n",
             "example": "2021-06-01T12:00:00Z"
           }
         }
@@ -2931,7 +5071,8 @@
             ],
             "enum": [
               "immediate",
-              "deferred"
+              "deferred",
+              null
             ],
             "description": "When the fee is collected. Customer-borne fees are always collected immediately; merchant-borne fees follow the payment's collection mode.\n",
             "example": "immediate"
@@ -2944,6 +5085,70 @@
             "description": "Taxes applied on this fee (for example, GST). Empty when no tax applies to the underlying rules.\n"
           }
         }
+      },
+      "SplitIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The pricing splits to apply, each entry an `id` returned by [Create a pricing split](#tag/pricing_split). A split fixes your share of a dynamic rule's fee and the customer bears the remainder. Omit `split_ids` and no dynamic rule is applied — pricing falls back to your normal (non-dynamic) rules.\n\n`split_ids` and `payment_methods` are independent. `payment_methods` restricts which methods the checkout offers. `split_ids` only changes how the fee for a method is priced: a split applies to its own payment method whether or not that method appears in `payment_methods`, and a split never adds a method to the checkout or removes one from it. One checkout can therefore price one method from a dynamic split and another method from your normal rules.\n\nEvery id must exist, must belong to your business, and must still point at a live dynamic rule. When two dynamic rules share a dimension — the same payment method, subtype, rail, currency and fee type — declare a split for every one of them or the request is rejected. On payment links and orders, a split whose payment method is not enabled for your business is also rejected.\n\nA subscription only ever charges `card`, or `pay_via_bank` when SEPA-eligible, so a split declared for any other payment method is rejected at subscription creation and on an auto debit. An auto-debit override must be declared for the method the subscription actually charges.\n\nGlomo can configure your account to require a declaration. On such an account, a payment link, an order, a payin quote or an `as_presented` subscription that omits `split_ids` is rejected.\n",
+        "example": [
+          "psplit_7Kq2mXbTdLp9"
+        ]
+      },
+      "Product": {
+        "type": "object",
+        "description": "Details of the product that the payment is related to.\n",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the product"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the product"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "example": {
+          "name": "REDACTED",
+          "description": "Flexible insurance for belongings travel and digital assets easy to manage"
+        }
+      },
+      "Amount": {
+        "type": "number",
+        "description": "The amount in the smallest currency unit. For example, if the amount is $299.00, then 29900 is passed in  this field. In the case of three decimal currencies, such as KWD, BHD and OMR, to represent an amount of 295.991, pass the value as 295990. And in the case of zero decimal currencies such as JPY, for amount ￥295, pass the value as 295.\n",
+        "example": 1000
+      },
+      "Currency": {
+        "type": "string",
+        "format": "iso-4217",
+        "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format.\n",
+        "example": "USD"
+      },
+      "IntervalType": {
+        "type": "string",
+        "description": "Used in combination with interval_count to define the billing cycle frequency.",
+        "enum": [
+          "month",
+          "year",
+          "as_presented"
+        ]
+      },
+      "IntervalCount": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "description": "Number of intervals between a billing cycle, used in combination with interval_type.\nValid combinations:\n- Monthly: interval_type='month', interval_count=1\n- Quarterly: interval_type='month', interval_count=3\n- Half-yearly: interval_type='month', interval_count=6\n- Yearly: interval_type='year', interval_count=1\n- As Presented: interval_type='as_presented', interval_count=null\n",
+        "enum": [
+          1,
+          3,
+          6,
+          null
+        ]
       },
       "TaxLine": {
         "type": "object",

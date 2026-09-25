@@ -1,1 +1,1 @@
-export { buildSampleRequest, renderSample, type ISampleRequest, type TSampleLanguage } from './sample-builder';
+export { buildSampleRequest, renderSample, type ISampleRequest, type ISampleField, type TSampleLanguage } from './sample-builder';
