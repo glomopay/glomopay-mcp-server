@@ -17,7 +17,7 @@ export class ImplementationPlannerTool extends BaseTool {
       name: 'glomo_implementation_planner',
       title: 'glomo Implementation Planner',
       description:
-        'Sequence a full glomo integration for a stated goal. Not available yet: authored per-flow call sequences are still being written (KAN-8608). Until they land, use glomo_docs_search and the published glomo skills to assemble the call order. No credential required.',
+        'Not available yet: the glomo integration planner is still being authored (KAN-8608) and does not return a plan. Until it lands, use glomo_docs_search and the published glomo skills to assemble the call order. No credential required.',
       inputSchema: {
         goal: z.string().min(1).max(500).describe('The integration goal in plain language, e.g. "accept card payments from US customers".'),
       },
