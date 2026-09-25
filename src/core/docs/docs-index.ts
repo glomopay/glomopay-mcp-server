@@ -1,5 +1,7 @@
 import { readFileSync } from 'fs';
 
+import { Bm25Index, STOPWORDS, repeat } from '@/shared/search/search.module';
+
 interface IDocChunk {
   title: string;
   url: string;
@@ -28,33 +30,6 @@ interface ICorpusPage {
   content: string;
 }
 
-const STOPWORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'of',
-  'to',
-  'for',
-  'in',
-  'on',
-  'at',
-  'is',
-  'are',
-  'be',
-  'with',
-  'by',
-  'as',
-  'it',
-  'this',
-  'that',
-  'from',
-  'you',
-  'your',
-]);
-const K1 = 1.5;
-const B = 0.75;
 const EXCERPT_LIMIT = 1200;
 
 function tokenize(text: string): string[] {
@@ -132,40 +107,19 @@ function chunkPage(page: ICorpusPage): IDocChunk[] {
 
 export class DocsIndex {
   private chunks: IDocChunk[];
-  private termFreqs: Map<string, number>[];
-  private docLengths: number[];
-  private idf: Map<string, number>;
-  private avgdl: number;
+  private bm25: Bm25Index;
 
   constructor(chunks: IDocChunk[]) {
     this.chunks = chunks;
 
-    const repeat = (tokens: string[], times: number): string[] => Array.from({ length: times }, () => tokens).flat();
-    const docTokens = chunks.map((chunk) => [
-      ...repeat(tokenize(chunk.title), 3),
-      ...repeat(tokenize(chunk.heading), 2),
-      ...repeat(tokenize(chunk.entryDescription), 2),
-      ...tokenize(`${chunk.section} ${chunk.sectionDescription} ${chunk.text}`),
-    ]);
-    this.docLengths = docTokens.map((tokens) => tokens.length);
-    this.avgdl = this.docLengths.reduce((sum, len) => sum + len, 0) / (this.docLengths.length || 1) || 1;
-
-    this.termFreqs = docTokens.map((tokens) => {
-      const freq = new Map<string, number>();
-      for (const token of tokens) freq.set(token, (freq.get(token) ?? 0) + 1);
-      return freq;
-    });
-
-    const docFreq = new Map<string, number>();
-    for (const freq of this.termFreqs) {
-      for (const term of freq.keys()) docFreq.set(term, (docFreq.get(term) ?? 0) + 1);
-    }
-
-    const total = chunks.length || 1;
-    this.idf = new Map();
-    for (const [term, df] of docFreq) {
-      this.idf.set(term, Math.log(1 + (total - df + 0.5) / (df + 0.5)));
-    }
+    this.bm25 = new Bm25Index(
+      chunks.map((chunk) => [
+        ...repeat(tokenize(chunk.title), 3),
+        ...repeat(tokenize(chunk.heading), 2),
+        ...repeat(tokenize(chunk.entryDescription), 2),
+        ...tokenize(`${chunk.section} ${chunk.sectionDescription} ${chunk.text}`),
+      ]),
+    );
   }
 
   static fromCorpusFile(filePath: string): DocsIndex {
@@ -181,18 +135,9 @@ export class DocsIndex {
     const terms = new Set(tokenize(query));
     if (terms.size === 0) return [];
 
-    const scored = this.chunks.map((chunk, i) => {
-      let score = 0;
-      for (const term of terms) {
-        const freq = this.termFreqs[i].get(term);
-        if (!freq) continue;
-        const idf = this.idf.get(term) ?? 0;
-        score += (idf * (freq * (K1 + 1))) / (freq + K1 * (1 - B + (B * this.docLengths[i]) / this.avgdl));
-      }
-      return { chunk, score };
-    });
-
-    return scored
+    const scores = this.bm25.scores(terms);
+    return this.chunks
+      .map((chunk, i) => ({ chunk, score: scores[i] }))
       .filter((entry) => entry.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)

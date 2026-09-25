@@ -19,8 +19,8 @@ export interface ITestServer {
   close: () => Promise<void>;
 }
 
-export async function startTestServer(options: { docsCorpusPath?: string } = {}): Promise<ITestServer> {
-  const app = await createApp({ specPath: FIXTURE_SPEC, apiHost: API_BASE, docsCorpusPath: options.docsCorpusPath });
+export async function startTestServer(options: { specPath?: string; docsCorpusPath?: string } = {}): Promise<ITestServer> {
+  const app = await createApp({ specPath: options.specPath ?? FIXTURE_SPEC, apiHost: API_BASE, docsCorpusPath: options.docsCorpusPath });
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, () => resolve(listening));
   });

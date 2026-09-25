@@ -1,0 +1,3016 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "glomo discovery test fixture",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.glomopay.com/api/v1",
+      "description": "Production server"
+    }
+  ],
+  "paths": {
+    "/payouts": {
+      "post": {
+        "tags": [
+          "Payout"
+        ],
+        "summary": "Create a new payout",
+        "operationId": "createPayout",
+        "description": "Create a payout in one of two ways:\n- **Payout without quote** — specify the beneficiary, currencies and amount inline. Fees and the FX\n  rate are determined at creation time (`CreatePayoutWithoutQuoteRequest`).\n\n- **Payout with quote** — pass a `quote_id` from `POST /quotes` (with `resource: payout`) to settle\n  against a locked rate and fee breakdown. The currencies, amount and payment rail are derived from\n  the quote and must not be sent (`CreatePayoutWithQuoteRequest`).\n\nThe request variant is selected by the presence of `quote_id`.\nIf payout queueing is enabled on your account and the balance in the source currency does not cover the amount plus fees, the payout is accepted with `status: queued` instead of being rejected. Glomo releases it automatically once the balance covers it. Fees and the FX rate are fixed at creation and honoured when the payout is released. Without payout queueing, a short balance is rejected at creation.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CreatePayoutWithoutQuoteRequest",
+                    "required": [
+                      "purpose_code",
+                      "beneficiary_id",
+                      "source_currency",
+                      "destination_currency"
+                    ]
+                  },
+                  {
+                    "$ref": "#/components/schemas/CreatePayoutWithQuoteRequest",
+                    "required": [
+                      "quote_id",
+                      "beneficiary_id",
+                      "purpose_code"
+                    ]
+                  }
+                ]
+              },
+              "examples": {
+                "payout_without_quote": {
+                  "summary": "Payout without quote (no quote_id)",
+                  "value": {
+                    "purpose_code": "PYR002",
+                    "beneficiary_id": "bene_a1b2c3d4e5",
+                    "source_currency": "USD",
+                    "destination_currency": "INR",
+                    "source_amount": 100000,
+                    "payment_rail": "neft",
+                    "invoice_number": "INV-2026-001",
+                    "request_id": "req-7f3a9c20",
+                    "documents": [
+                      "doc_11aa22bb33"
+                    ],
+                    "notes": {
+                      "internal_ref": "batch-42"
+                    }
+                  }
+                },
+                "payout_with_quote": {
+                  "summary": "Payout with quote (quote_id present)",
+                  "value": {
+                    "quote_id": "quote_3m4n5o6p7q",
+                    "beneficiary_id": "bene_a1b2c3d4e5",
+                    "purpose_code": "PYR002",
+                    "invoice_number": "INV-2026-001",
+                    "request_id": "req-7f3a9c20",
+                    "documents": [
+                      "doc_11aa22bb33"
+                    ],
+                    "notes": {
+                      "internal_ref": "batch-42"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payout created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payout"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request — validation error. For quote-based payouts, possible messages include `quote_id not found`, `quote_id has expired`, `quote_id has already been used`, `source_amount cannot be specified when quote_id is present` (likewise for any other quote-derived field), `Quote is not compatible with the selected beneficiary` (the quote's rail is not supported by the chosen beneficiary), and `Quote is not a payout quote` (the `quote_id` belongs to a payin quote).\nWhen the balance does not cover the payout and payout queueing is not enabled on your account, the message reads `Account has insufficient balance to process this transaction. Additional amount required: N.` where `N` is the shortfall, in the smallest unit of the source currency.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A payout with this `request_id` already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Conflict"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "A payout with this request_id already exists"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/payment": {
+      "get": {
+        "tags": [
+          "Payment"
+        ],
+        "summary": "List all payments",
+        "description": "Returns a list of your payments, sorted by creation date with the most recent first.\n\nFilters combine with AND, with one exception: `payin_id` and `subscription_id` are mutually exclusive\nand sending both returns `400`.\n\nThe `status` filter accepts only `in_progress`, `success`, `failed` and `action_required`; any other\nvalue returns `400`. That is not the same set of values a payment can come back with, and the filter\ndoes not map onto the response field one-for-one: a payment returned with `status: under_review` is\nmatched by `status=in_progress`, and some payments returned with `status: in_progress` are not matched\nby `status=in_progress` at all. Treat the filter as a coarse narrowing and read `status` on each\npayment you get back.\n\n`compliance_status` is a separate field with its own filter and moves independently of `status`. Most\npayments have no compliance status at all, so filtering on it will exclude them.\n",
+        "operationId": "getPayments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "customer_id",
+            "schema": {
+              "type": "string"
+            },
+            "description": "The unique identifier for the customer.",
+            "example": "cust_E602sMzgjpDC"
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "failed",
+                "action_required",
+                "in_progress"
+              ]
+            },
+            "example": "success",
+            "description": "Status of payin to filter"
+          },
+          {
+            "in": "query",
+            "name": "compliance_status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "under_review",
+                "action_required",
+                "approved",
+                "rejected"
+              ]
+            },
+            "description": "Filters payments by the outcome of their compliance review.",
+            "example": "approved"
+          },
+          {
+            "in": "query",
+            "name": "payin_id",
+            "schema": {
+              "type": "string"
+            },
+            "description": "The unique identifier for the payin.",
+            "example": "payin_E602dMzgjpDC"
+          },
+          {
+            "in": "query",
+            "name": "payment_type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "payment_link",
+                "orders",
+                "add_funds"
+              ]
+            },
+            "description": "Filters payments by their payin type. Use `add_funds` to list only Add Balance top-ups crediting your Funded Balance.\n",
+            "example": "add_funds"
+          },
+          {
+            "in": "query",
+            "name": "subscription_id",
+            "schema": {
+              "type": "string"
+            },
+            "description": "The unique identifier for the subscription.",
+            "example": "sub_68877570b5zeE"
+          },
+          {
+            "in": "query",
+            "name": "currency",
+            "description": "Filters on the payment's `requested_currency` / `converted_currency` — the currency the merchant asked for, which is also the currency of the order or payment link the payment belongs to. It does not filter on `payment_currency`, the currency the customer was actually charged in. Those two differ whenever local payments are in play: a card payment against a USD order is commonly charged to the customer in AED, and that payment matches `USD`, not `AED`. Matching is case-insensitive.\n",
+            "schema": {
+              "type": "string",
+              "format": "iso-4217, case-insensitive",
+              "description": "The currency in which the payment is made. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n"
+            },
+            "example": "USD"
+          },
+          {
+            "in": "query",
+            "name": "request_id",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter payments by the merchant-provided idempotency key.",
+            "example": "unique_request_id_123"
+          },
+          {
+            "$ref": "#/components/parameters/BeforeParam"
+          },
+          {
+            "$ref": "#/components/parameters/AfterParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PageParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of payments matching the filters. **Note:** If filters do not match, API will return an empty list.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Payment"
+                      }
+                    },
+                    "page_meta": {
+                      "$ref": "#/components/schemas/PageMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/v2/beneficiaries": {
+      "post": {
+        "tags": [
+          "beneficiary_v2"
+        ],
+        "summary": "Create a Beneficiary",
+        "description": "Creates a beneficiary with structured nested objects for beneficiary details, address, and bank account or UPI information.\n",
+        "operationId": "createBeneficiaryV2",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeneficiaryV2CreateRequest"
+              },
+              "examples": {
+                "payout_usd": {
+                  "summary": "Payout Beneficiary — USD (SWIFT)",
+                  "value": {
+                    "category": "payout",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "individual",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "CA",
+                        "country_code": "USA",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "bank_account": {
+                      "account_number": "REDACTED",
+                      "swift_code": "REDACTED",
+                      "currency": "USD"
+                    },
+                    "notes": {
+                      "invoice_ref": "INV-2026-002"
+                    }
+                  }
+                },
+                "payout_eur": {
+                  "summary": "Payout Beneficiary — EUR (SEPA, IBAN only)",
+                  "value": {
+                    "category": "payout",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "business",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "Berlin",
+                        "country_code": "DEU",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "bank_account": {
+                      "account_number": "REDACTED",
+                      "currency": "EUR"
+                    }
+                  }
+                },
+                "payout_gbp": {
+                  "summary": "Payout Beneficiary — GBP (Faster Payments, sort code)",
+                  "value": {
+                    "category": "payout",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "individual",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "England",
+                        "country_code": "GBR",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "bank_account": {
+                      "account_number": "REDACTED",
+                      "local_routing_number": "REDACTED",
+                      "currency": "GBP"
+                    }
+                  }
+                },
+                "payout_aed": {
+                  "summary": "Payout Beneficiary — AED (IBAN only)",
+                  "value": {
+                    "category": "payout",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "business",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "Dubai",
+                        "country_code": "ARE",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "bank_account": {
+                      "account_number": "REDACTED",
+                      "currency": "AED"
+                    }
+                  }
+                },
+                "payout_aud": {
+                  "summary": "Payout Beneficiary — AUD (NPP, BSB)",
+                  "value": {
+                    "category": "payout",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "business",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "VIC",
+                        "country_code": "AUS",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "bank_account": {
+                      "account_number": "REDACTED",
+                      "local_routing_number": "REDACTED",
+                      "currency": "AUD"
+                    }
+                  }
+                },
+                "payout_inr": {
+                  "summary": "Payout Beneficiary — INR (IFSC)",
+                  "value": {
+                    "category": "payout",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "individual",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "Karnataka",
+                        "country_code": "IND",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "bank_account": {
+                      "account_number": "REDACTED",
+                      "local_routing_number": "REDACTED",
+                      "currency": "INR"
+                    }
+                  }
+                },
+                "payout_upi_beneficiary": {
+                  "summary": "Payout Beneficiary — INR (UPI)",
+                  "value": {
+                    "category": "payout",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "individual",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "Karnataka",
+                        "country_code": "IND",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "upi_account": {
+                      "upi_id": "1111111111@ybl"
+                    },
+                    "notes": {
+                      "invoice_ref": "INV-2026-003"
+                    }
+                  }
+                },
+                "lrs_beneficiary": {
+                  "summary": "LRS Beneficiary with all fields",
+                  "value": {
+                    "category": "lrs",
+                    "beneficiary": {
+                      "name": "REDACTED",
+                      "type": "business",
+                      "email": "REDACTED",
+                      "phone": "REDACTED",
+                      "nickname": "REDACTED",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "address_line2": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "NY",
+                        "country_code": "USA",
+                        "postal_code": "REDACTED"
+                      }
+                    },
+                    "bank_account": {
+                      "account_number": "REDACTED",
+                      "name": "REDACTED",
+                      "swift_code": "REDACTED",
+                      "local_routing_number": "REDACTED",
+                      "currency": "USD",
+                      "address": {
+                        "address_line1": "REDACTED",
+                        "city": "REDACTED",
+                        "state": "NY",
+                        "country_code": "USA",
+                        "postal_code": "REDACTED"
+                      },
+                      "intermediate_bank": {
+                        "name": "REDACTED",
+                        "country": "USA",
+                        "swift_code": "REDACTED",
+                        "account_number": "REDACTED"
+                      }
+                    },
+                    "notes": {
+                      "invoice_ref": "INV-2026-001",
+                      "project": "Alpha"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Beneficiary created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeneficiaryV2"
+                },
+                "example": {
+                  "id": "bene_5JU9yv0lGSUP",
+                  "name": "REDACTED",
+                  "type": "business",
+                  "category": "lrs",
+                  "status": "pending",
+                  "email": "REDACTED",
+                  "phone": "REDACTED",
+                  "nickname": "REDACTED",
+                  "upi_account": null,
+                  "created_at": "2025-01-15T10:00:00Z",
+                  "updated_at": "2025-01-15T10:00:00Z",
+                  "address": {
+                    "address_line1": "REDACTED",
+                    "address_line2": "REDACTED",
+                    "city": "REDACTED",
+                    "state": "NY",
+                    "country_code": "USA",
+                    "postal_code": "REDACTED"
+                  },
+                  "bank_account": {
+                    "account_number": "REDACTED",
+                    "name": "REDACTED",
+                    "swift_code": "REDACTED",
+                    "local_routing_number": "REDACTED",
+                    "currency": "USD",
+                    "address": {
+                      "address_line1": "REDACTED",
+                      "address_line2": "REDACTED",
+                      "city": "REDACTED",
+                      "state": "NY",
+                      "country_code": "USA",
+                      "postal_code": "REDACTED"
+                    },
+                    "intermediate_bank": {
+                      "name": "REDACTED",
+                      "country": "USA",
+                      "swift_code": "REDACTED",
+                      "account_number": "REDACTED"
+                    }
+                  },
+                  "notes": {
+                    "invoice_ref": "INV-2026-001",
+                    "project": "Alpha"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request - Validation errors in the request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Bad Request"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Error message indicating which fields failed validation"
+                    }
+                  }
+                },
+                "examples": {
+                  "missing_category": {
+                    "summary": "Missing category field",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Category can't be blank, Category must be one of: lrs, payout"
+                    }
+                  },
+                  "invalid_category": {
+                    "summary": "Invalid category value",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Category must be one of: lrs, payout"
+                    }
+                  },
+                  "missing_beneficiary_name": {
+                    "summary": "Missing beneficiary name",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Beneficiary name can't be blank"
+                    }
+                  },
+                  "invalid_swift_code": {
+                    "summary": "Invalid SWIFT code format",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Swift code must be 8 to 11 characters long"
+                    }
+                  },
+                  "lrs_invalid_swift_length": {
+                    "summary": "LRS SWIFT code must be 8 characters",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Swift code must be 8 characters long"
+                    }
+                  },
+                  "lrs_missing_routing_number": {
+                    "summary": "LRS requires local routing number",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Local routing number can't be blank"
+                    }
+                  },
+                  "unresolved_bank_details": {
+                    "summary": "Bank details omitted and could not be resolved",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Could not resolve bank details from the swift_code/local_routing_number provided. Send bank_account.name and bank_account.address, or correct the identifier."
+                    }
+                  },
+                  "missing_address": {
+                    "summary": "Missing beneficiary address",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Beneficiary address is required"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity - Business logic errors (e.g., duplicate bank account)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Unprocessable Entity"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Error message indicating the business logic error"
+                    }
+                  }
+                },
+                "examples": {
+                  "duplicate_account": {
+                    "summary": "Duplicate bank account",
+                    "value": {
+                      "error": "Unprocessable Entity",
+                      "message": "Validation failed: Business already had this Account Number, Account Type and Transfer Method"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/v2/beneficiaries/{id}": {
+      "get": {
+        "tags": [
+          "beneficiary_v2"
+        ],
+        "summary": "Get a Beneficiary",
+        "description": "Retrieves the details of an existing beneficiary by ID.\n",
+        "operationId": "getBeneficiaryByIdV2",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The ID of the beneficiary.",
+            "example": "bene_698c0615XZocZ"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Beneficiary details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeneficiaryV2"
+                },
+                "example": {
+                  "id": "bene_698c0615XZocZ",
+                  "name": "REDACTED",
+                  "type": "business",
+                  "category": "lrs",
+                  "status": "active",
+                  "email": "REDACTED",
+                  "phone": "REDACTED",
+                  "nickname": "REDACTED",
+                  "documents": [
+                    "doc_68e7980auYRAs"
+                  ],
+                  "address": {
+                    "address_line1": "REDACTED",
+                    "address_line2": "REDACTED",
+                    "city": "REDACTED",
+                    "state": "NY",
+                    "country_code": "USA",
+                    "postal_code": "REDACTED"
+                  },
+                  "bank_account": {
+                    "account_number": "REDACTED",
+                    "name": "REDACTED",
+                    "swift_code": "REDACTED",
+                    "local_routing_number": "REDACTED",
+                    "currency": "USD",
+                    "address": {
+                      "address_line1": "REDACTED",
+                      "city": "REDACTED",
+                      "state": "NY",
+                      "country_code": "USA",
+                      "postal_code": "REDACTED"
+                    },
+                    "intermediate_bank": {
+                      "name": "REDACTED",
+                      "country": "USA",
+                      "swift_code": "REDACTED",
+                      "account_number": "REDACTED"
+                    }
+                  },
+                  "created_at": "2025-01-15T10:00:00Z",
+                  "updated_at": "2025-01-15T10:00:00Z",
+                  "notes": {
+                    "invoice_ref": "INV-2026-001",
+                    "project": "Alpha"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Beneficiary not found or does not belong to the authenticated business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityNotFound"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/payouts/{id}/cancel": {
+      "patch": {
+        "tags": [
+          "Payout"
+        ],
+        "summary": "Cancel a payout",
+        "operationId": "cancelPayout",
+        "description": "Cancel a payout that has not yet reached a stage where it can no longer be stopped. A payout with `status: queued` can be cancelled at any time while it waits for the balance to cover it. Nothing is reversed, because no funds were held.\n",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The unique identifier of the payout to cancel.",
+            "schema": {
+              "type": "string",
+              "example": "pout_DdWp_HUbOnlg"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payout cancelled successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "_recursiveProbe": {
+                      "$ref": "#/components/schemas/RecursiveProbe"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "404": {
+            "description": "Payout not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityNotFound"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/customer": {
+      "get": {
+        "tags": [
+          "Customer"
+        ],
+        "summary": "List all customers",
+        "description": "Returns a list of your customers. The customers are returned sorted by creation date, with the most recent customers appearing first.\n",
+        "operationId": "getCustomers",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "customer_type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "individual",
+                "business"
+              ]
+            },
+            "description": "Type of customer to filter"
+          },
+          {
+            "in": "query",
+            "name": "email_address",
+            "schema": {
+              "type": "string",
+              "format": "email"
+            },
+            "description": "Filter customers by email address"
+          },
+          {
+            "in": "query",
+            "name": "tax_identification_number",
+            "schema": {
+              "type": "string"
+            },
+            "description": "**Applicable only to the LRS (Liberalised Remittance Scheme / resident-India remittance) flow.** Filter customers by PAN (tax identification number). Matched exactly on the normalised value (case-insensitive; the value is trimmed and upper-cased before matching), so a partial PAN returns no results. An invalid PAN format returns a 400 error.\n"
+          },
+          {
+            "$ref": "#/components/parameters/BeforeParam"
+          },
+          {
+            "$ref": "#/components/parameters/AfterParam"
+          },
+          {
+            "$ref": "#/components/parameters/PerPageParam"
+          },
+          {
+            "$ref": "#/components/parameters/PageParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of customers matching the filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Customer"
+                      }
+                    },
+                    "page_meta": {
+                      "$ref": "#/components/schemas/PageMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Bad Request"
+                      ]
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Error message indicating which parameter was invalid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/api-keys/rotate": {
+      "post": {
+        "tags": [
+          "api_key"
+        ],
+        "summary": "Rotate API key",
+        "description": "Rotates the secret API key for your account, generating a new key immediately. The previous key remains valid until `expire_after_in_seconds` has elapsed, giving you time to update your integrations. Once the expiry period passes, the old key is revoked and any requests using it will return `401 Unauthorized`.\n",
+        "operationId": "rotateApiKey",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expire_after_in_seconds"
+                ],
+                "properties": {
+                  "expire_after_in_seconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 604800,
+                    "description": "Duration (in seconds) for which the previous key remains valid after rotation. Must be an integer between 0 and 604800 (7 days). Use this window to update all integrations before the old key is revoked.\n",
+                    "example": 3600
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "API key rotated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secret_key": {
+                      "type": "string",
+                      "description": "The newly generated secret API key. Store it securely — it will not be shown again.",
+                      "example": "<NEW_JWT>"
+                    },
+                    "previous_key_expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "ISO 8601 timestamp (UTC) at which the previous key will be revoked.",
+                      "example": "2026-05-13T12:10:57Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request — invalid `expire_after_in_seconds` value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Bad Request"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "examples": {
+                  "non_integer": {
+                    "summary": "Non-integer value passed",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Expire after in seconds must be an integer"
+                    }
+                  },
+                  "out_of_range": {
+                    "summary": "Value outside allowed range (0–604800)",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Expire after in seconds must be between 0 and 604800"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "Unauthorized"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "example": {
+                  "error": "Unauthorized",
+                  "message": "Missing token"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RecursiveProbe": {
+        "type": "object",
+        "description": "Synthetic self-referential schema for the cycle-guard test.",
+        "x-internal": true,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "child": {
+            "$ref": "#/components/schemas/RecursiveProbe"
+          }
+        }
+      },
+      "CreatePayoutWithoutQuoteRequest": {
+        "type": "object",
+        "title": "CreatePayoutWithoutQuoteRequest",
+        "additionalProperties": false,
+        "description": "Create a payout without a quote by specifying the beneficiary, currencies and amount. Fees and the FX rate are determined at creation time. Use this variant when you have not pre-generated a quote. To create a payout against a locked quote instead, see `CreatePayoutWithQuoteRequest`.\n",
+        "properties": {
+          "purpose_code": {
+            "type": "string",
+            "description": "Purpose code for this payout.\n",
+            "example": "PYR002"
+          },
+          "beneficiary_id": {
+            "type": "string",
+            "description": "The unique identifier for the beneficiary.\n",
+            "example": "bene_5JU9yv0lGSUP"
+          },
+          "source_currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP",
+              "AED",
+              "SGD",
+              "AUD"
+            ],
+            "description": "The currency from which the amount is deducted from your source balance.\n",
+            "example": "USD"
+          },
+          "destination_currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "enum": [
+              "USD",
+              "EUR",
+              "GBP",
+              "AED",
+              "SGD",
+              "AUD",
+              "INR"
+            ],
+            "description": "The currency in which the beneficiary receives the payout. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format.\n",
+            "example": "INR"
+          },
+          "source_amount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The amount you intend to send, in the smallest unit of the source currency (e.g. 1000 equates to $10.00 in USD).\n\nExactly one of `source_amount` or `destination_amount` must be provided (not both).\n",
+            "example": 100000
+          },
+          "destination_amount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The amount the beneficiary will receive, in the smallest unit of the destination currency (e.g. cents for USD, paisa for INR).\n\nExactly one of `source_amount` or `destination_amount` must be provided (not both).\n",
+            "example": 8235000
+          },
+          "payment_rail": {
+            "type": "string",
+            "default": "swift",
+            "enum": [
+              "upi",
+              "rtgs",
+              "neft",
+              "imps",
+              "ipp",
+              "fts",
+              "sepa",
+              "fps",
+              "swift"
+            ],
+            "description": "The payment rail to use for this payout. Each local rail serves one corridor and is only available when `destination_currency` matches it: `upi`, `imps`, `neft`, `rtgs` for `INR`; `ipp`, `fts` for `AED`; `sepa` for `EUR`; `fps` for `GBP`. `swift` is used for international transfers and is available on any corridor. The rail must be eligible for the beneficiary and the amount must fall inside the rail's limits. Defaults to `swift` if omitted; a local rail is not selected automatically.\n",
+            "example": "neft"
+          },
+          "invoice_number": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "An optional invoice reference for this payout.\n",
+            "example": "INV-2026-001"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "A unique client-generated identifier for this payout request. If a payout with the same `request_id` already exists for your business, the API returns a `409 Conflict` response. Use this to safely retry payout creation without risk of creating duplicates. You can look up the existing payout using `GET /v1/payouts?request_id=<your_request_id>`.\n",
+            "example": "req-7f3a9c20"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of document IDs to attach to the payout.\n",
+            "example": [
+              "doc_5JU9yv0lGSUP",
+              "doc_678a5aa9SKkEr"
+            ]
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          }
+        }
+      },
+      "CreatePayoutWithQuoteRequest": {
+        "type": "object",
+        "title": "CreatePayoutWithQuoteRequest",
+        "additionalProperties": false,
+        "description": "Create a payout against a previously generated quote (see `POST /quotes` with `resource: payout`). The quote locks the fees, FX rate, currencies, amount and payment rail. The locked fields (`source_amount`, `destination_amount`, `source_currency`, `destination_currency`, `payment_rail`) must NOT be sent — including any of them returns a `400 Bad Request`.\n",
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "description": "The identifier of a payout quote generated via `POST /quotes`. The quote must exist for your business, must be a payout quote, must not have expired, and must not already have been used for another payout.\n",
+            "example": "quote_3m4n5o6p7q"
+          },
+          "beneficiary_id": {
+            "type": "string",
+            "description": "The unique identifier for the beneficiary. The quote's payment rail must be supported by this beneficiary, otherwise the request returns a `400 Bad Request`.\n",
+            "example": "bene_5JU9yv0lGSUP"
+          },
+          "purpose_code": {
+            "type": "string",
+            "description": "Purpose code for this payout.\n",
+            "example": "PYR002"
+          },
+          "invoice_number": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "An optional invoice reference for this payout.\n",
+            "example": "INV-2026-001"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "A unique client-generated identifier for this payout request. If a payout with the same `request_id` already exists for your business, the API returns a `409 Conflict` response. Use this to safely retry payout creation without risk of creating duplicates. You can look up the existing payout using `GET /v1/payouts?request_id=<your_request_id>`.\n",
+            "example": "req-7f3a9c20"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of document IDs to attach to the payout.\n",
+            "example": [
+              "doc_5JU9yv0lGSUP",
+              "doc_678a5aa9SKkEr"
+            ]
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          }
+        }
+      },
+      "Payout": {
+        "type": "object",
+        "x-tags": [
+          "Payout"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "readOnly": true,
+            "description": "The unique identifier for the payin.\n",
+            "example": "payout_DdWp_HUbOnlg"
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "enum": [
+              "pending_approval",
+              "queued",
+              "in_progress",
+              "action_required",
+              "success",
+              "failed",
+              "cancelled"
+            ],
+            "description": "The status of the payout.\n",
+            "example": "success"
+          },
+          "destination_amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The amount the beneficiary will receive, expressed in the smallest unit of the specified currency (e.g., cents for USD, paisa for INR). \n      For example, 1000 represents $10.00 in USD. The actual currency is determined by the currency field. Note: \"cents\" is used generically to denote \n      the minimal currency unit, not necessarily USD.\n",
+            "example": 1000
+          },
+          "destination_currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          },
+          "source_amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The amount you intend to send, also specified in the smallest unit of the selected currency. For example, 1000 equates to $10.00 in USD. The currency field determines which currency is used. As with destination_amount, \"cents\" is a placeholder for the minimal unit, not specifically USD.\n",
+            "example": 1000
+          },
+          "source_currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          },
+          "beneficiary_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The unique identifier for the beneficiary.\n",
+            "example": "bene_5JU9yv0lGSUP"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttachedDocument"
+            },
+            "description": "The attached documents for the payout.\n"
+          },
+          "purpose_code": {
+            "type": "string",
+            "description": "Purpose code for why you want to receive this payment\n",
+            "example": "S0017"
+          },
+          "mid_market_rate": {
+            "type": "object",
+            "readOnly": true,
+            "properties": {
+              "currency": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "iso-4217",
+                "description": "The destination currency code",
+                "example": "USD"
+              },
+              "rate": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "float",
+                "description": "The conversion rate factor",
+                "example": 1.17
+              }
+            },
+            "description": "The mid-market rate at the time of payout creation. The currency represents the destination currency and rate represents the factor of conversion. Example: 1 EUR = 1.17 USD. Rate corresponds to 1.17 and currency is USD.\n"
+          },
+          "fees": {
+            "type": "object",
+            "readOnly": true,
+            "properties": {
+              "fx_fee": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "format": "iso-4217",
+                    "description": "The currency code for the FX fee",
+                    "example": "USD"
+                  },
+                  "amount": {
+                    "type": "number",
+                    "description": "The amount of the FX fee",
+                    "example": 200
+                  }
+                },
+                "description": "The foreign exchange fees applied to the payout"
+              },
+              "txn_fee": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "format": "iso-4217",
+                    "description": "The currency code for the transaction fee",
+                    "example": "USD"
+                  },
+                  "amount": {
+                    "type": "number",
+                    "description": "The amount of the transaction fee",
+                    "example": 100
+                  }
+                },
+                "description": "The transaction fees applied to the payout"
+              }
+            },
+            "description": "The fees applied to this payout\n"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the payout was created\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the payout was last updated\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "utr": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "(Optional) Unique Transaction Reference for the payout. This is a unique identifier assigned by the bank to track the transaction.\n",
+            "example": "AXISN52024112000001234"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "maxLength": 64,
+            "description": "The client-provided unique identifier for this payout request. Can be used to look up the payout via `GET /v1/payouts?request_id=<your_request_id>`.\n",
+            "example": "your-internal-id"
+          },
+          "payment_rail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "enum": [
+              "swift",
+              "imps",
+              "neft",
+              "rtgs",
+              "upi",
+              "ipp",
+              "fts",
+              "sepa",
+              "fps",
+              null
+            ],
+            "description": "The payment rail used to settle this payout. Each local rail serves one corridor: `upi`, `imps`, `neft`, `rtgs` for `INR`; `ipp`, `fts` for `AED`; `sepa` for `EUR`; `fps` for `GBP`. `swift` is used for international transfers.\n",
+            "example": "swift"
+          },
+          "invoice_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "maxLength": 50,
+            "description": "The invoice reference provided when the payout was created.\n",
+            "example": "INV-2026-001"
+          },
+          "fee_collection_mode": {
+            "type": "string",
+            "readOnly": true,
+            "description": "How fees for this payout are collected.\n",
+            "example": "merchant"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "enum": [
+              "QUOTE_EXPIRED",
+              "QUEUE_EXPIRED",
+              "PAYOUT_REJECTED",
+              "INVALID_BENE_ACCOUNT_NUMBER",
+              "INVALID_BENE_ACCOUNT_TYPE",
+              "INVALID_BENE_IFSC",
+              "INVALID_VPA",
+              "INVALID_BENE_NAME",
+              "INVALID_BENE_ADDRESS",
+              "INVALID_BENE_EMAIL",
+              "INVALID_BENE_CONTACT",
+              "NAME_MISMATCH",
+              null
+            ],
+            "description": "A machine-readable code describing why the payout failed or was cancelled. `null` unless the\npayout is in an error state. The accompanying `error_description` carries the human-readable text.\n\n| Code | Description |\n| ---- | ----------- |\n| `QUOTE_EXPIRED` | Quote has expired. Please create a new payout with a valid quote. |\n| `QUEUE_EXPIRED` | Payout stayed queued for 30 days because the balance did not cover it. No funds were held. |\n| `PAYOUT_REJECTED` | Payout was rejected by the bank. Please reach out to support. (default fallback) |\n| `INVALID_BENE_ACCOUNT_NUMBER` | Beneficiary account number is invalid. |\n| `INVALID_BENE_ACCOUNT_TYPE` | Beneficiary account type is invalid. |\n| `INVALID_BENE_IFSC` | Beneficiary IFSC code is invalid. |\n| `INVALID_VPA` | VPA/UPI address is invalid. |\n| `INVALID_BENE_NAME` | Beneficiary name is invalid. |\n| `INVALID_BENE_ADDRESS` | Beneficiary address or PIN/ZIP code is invalid. |\n| `INVALID_BENE_EMAIL` | Beneficiary email is invalid. |\n| `INVALID_BENE_CONTACT` | Beneficiary contact/mobile number is invalid. |\n| `NAME_MISMATCH` | Remitter and beneficiary names do not match for the selected purpose. |\n",
+            "example": null
+          },
+          "error_description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "A merchant-facing, human-readable description of the error. Operational copy for the merchant. `null` unless the payout is in an error state. See `customer_error_description` for the copy meant for the end-customer.\n",
+            "example": null
+          },
+          "customer_error_description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "Customer-facing error copy, written for the merchant to relay to their end-customer. Derives from the same `error_code` as `error_description` but targets a different audience. `null` when there is no `error_code`, or when the error code has no customer-facing variant (some codes are merchant-only).\n",
+            "example": null
+          },
+          "quote_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "The identifier of the quote this payout was created against. `null` for payouts that were not created from a quote.\n",
+            "example": "quote_3m4n5o6p7q"
+          },
+          "taxes": {
+            "type": "array",
+            "readOnly": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The name of the tax withheld.",
+                  "example": "GST"
+                },
+                "amount": {
+                  "type": "number",
+                  "description": "The tax amount, in the smallest unit of `currency`. For example, 877 is 8.77 INR.\n",
+                  "example": 877
+                },
+                "currency": {
+                  "type": "string",
+                  "format": "iso-4217",
+                  "description": "The currency the tax was withheld in, in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format.\n",
+                  "example": "INR"
+                },
+                "bps": {
+                  "type": "integer",
+                  "description": "The rate the tax was charged at, in basis points. 1800 is 18%.",
+                  "example": 1800
+                }
+              }
+            },
+            "description": "Taxes withheld on this payout, deducted from the amount before it reached the beneficiary. Present on repatriation payouts (purpose code `P0001`), where the remitting bank withholds GST on the currency conversion; empty for every other purpose, and empty until the bank has confirmed the payout.\n"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          }
+        }
+      },
+      "Payment": {
+        "type": "object",
+        "x-tags": [
+          "Payment"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the payment.\n",
+            "example": "payt_E602dMzgjpDC"
+          },
+          "payin_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The unique identifier for the payin. This is set only for payments associated to a payin.\n",
+            "example": "payin_E602dMzgjpDC"
+          },
+          "payin_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The type of the payin. This is set only for payments associated to a payin.\n",
+            "enum": [
+              "payment_link",
+              "orders",
+              "add_funds"
+            ]
+          },
+          "subscription_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The unique identifier for the subscription. This is set only for subscription-related payments.\n",
+            "example": "sub_68877570b5zeE"
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "enum": [
+              "success",
+              "failed",
+              "action_required",
+              "in_progress",
+              "under_review"
+            ],
+            "description": "The status of the payment.\n"
+          },
+          "compliance_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "enum": [
+              "action_required",
+              "under_review",
+              "approved",
+              "rejected"
+            ],
+            "description": "The compliance review status of the payment. Present only for payments that have been screened for sanctions or transaction-monitoring holds; `null` for payments that were not screened. This is separate from `status` — a payment can be `status: success` while `compliance_status` is `action_required`, meaning the payment itself completed but funds are held pending compliance review. See the `rfi` field for what's required when `action_required`.\n",
+            "example": "action_required"
+          },
+          "rfi": {
+            "type": "object",
+            "readOnly": true,
+            "description": "Present only when a compliance-related Request For Information exists on this payment. Describes why the payment was flagged and what's required to resolve it.\n",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The unique identifier for the RFI.\n",
+                "example": "rfi_6a72a39b38jDD"
+              },
+              "reason_code_description": {
+                "type": "string",
+                "description": "A human-readable description of why this payment was flagged for compliance review.\n",
+                "example": "The payment has been flagged for a compliance review and requires additional information before it can credited to your account."
+              },
+              "reason_code": {
+                "type": "string",
+                "description": "A machine-readable code for the compliance review reason.\n",
+                "example": "COMPLIANCE_REVIEW"
+              },
+              "response_deadline": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "description": "The deadline by which the requested documents must be submitted. `null` when no deadline has been set.\n",
+                "example": "2026-08-21T10:29:00Z"
+              },
+              "documents_required": {
+                "type": "array",
+                "description": "Present only when `compliance_status` is `action_required`. The documents needed to resolve this RFI. Submit documents against a specific requirement using its `rfi_doc_id` via the [Respond to an RFI](/api-reference/openapi/rfi/respondrfi) endpoint, passing the `rfi.id` as the RFI identifier.\n",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rfi_doc_id": {
+                      "type": "string",
+                      "description": "The unique identifier for this document requirement.\n",
+                      "example": "rfidoc_6a72a39b38jDD"
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "A human-readable description of what document is needed.\n",
+                      "example": "Passport"
+                    },
+                    "multiple_allowed": {
+                      "type": "boolean",
+                      "description": "Whether more than one document can be submitted for this requirement.\n",
+                      "example": false
+                    },
+                    "max_count": {
+                      "type": "integer",
+                      "description": "The maximum number of documents that can be submitted for this requirement.\n",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "payment_currency": {
+            "type": "string",
+            "format": "iso-4217, case-insensitive",
+            "description": "The currency in which the customer pays. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, AED.\n",
+            "example": "AED"
+          },
+          "payment_amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The total amount the customer pays in cents (includes customer-borne fees if applicable). For example, 374580 cents is 3,745.80 AED. The currency is determined by the `payment_currency` field.\n",
+            "example": 374580
+          },
+          "converted_currency": {
+            "type": "string",
+            "format": "iso-4217, case-insensitive",
+            "description": "The settlement currency after conversion. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          },
+          "converted_amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The final amount after currency conversion in cents (includes all fees). For example, 102000 cents is $1,020.00. The currency is determined by the `converted_currency` field.\n",
+            "example": 102000
+          },
+          "requested_currency": {
+            "type": "string",
+            "format": "iso-4217, case-insensitive",
+            "description": "The currency that was originally requested by the merchant. The currency code is in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          },
+          "requested_amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "The amount originally requested by the merchant in cents, excluding customer-borne fees. For example, 100000 cents is $1,000.00. The currency is determined by the `requested_currency` field.\n",
+            "example": 100000
+          },
+          "purpose_code": {
+            "type": "string",
+            "description": "The purpose code of the payment. This should match the purpose code of the payin.\n",
+            "example": "S0001"
+          },
+          "sender_name": {
+            "type": "string",
+            "description": "The name of the sender.\n",
+            "example": "John Doe"
+          },
+          "notes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Custom field values for this payment. See [Custom Fields](/payin/custom-fields).\n",
+            "example": {
+              "policy_number": "POL-001"
+            }
+          },
+          "error_code": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The error code for the respective error. Error code mappings can be found in the [product guide](/payin/payment#error-codes).\n",
+            "example": "PAYMENT_DECLINED"
+          },
+          "error_description": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The merchant-facing error description corresponding to the error code. Operational copy for the merchant. See `customer_error_description` for the copy meant for the end-customer.\n",
+            "example": "The payment attempt was declined. This could be due to issuer rejection, risk assessment, or restrictions on the card or account. The customer should contact their bank or try a different payment method."
+          },
+          "customer_error_description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "Customer-facing error copy, written for the merchant to relay to their end-customer. Derives from the same `error_code` as `error_description` but targets a different audience. `null` when there is no `error_code`, or when the error code has no customer-facing variant (some codes are merchant-only, e.g. `ACCOUNT_LOCKED`, `LOGGED_IN_ELSEWHERE`, `FUNCTIONALITY_RESTRICTED`).\n",
+            "example": "Your payment could not be completed. Please try a different payment method or contact your bank."
+          },
+          "paid_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "format": "date-time",
+            "description": "The timestamp at which the payment was completed. `null` if the payment has not been paid.\n",
+            "example": "2024-12-06T11:38:37.130Z"
+          },
+          "fee_bearer": {
+            "type": "string",
+            "enum": [
+              "customer",
+              "merchant",
+              "split"
+            ],
+            "description": "The party bearing the fees for the payment.\n",
+            "example": "customer"
+          },
+          "fee_collection_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "immediate",
+              "deferred"
+            ],
+            "description": "When merchant-borne fees are collected. `immediate` deducts fees up front; `deferred` invoices them later. `null` when not applicable.\n",
+            "example": "immediate"
+          },
+          "created_at": {
+            "type": "string",
+            "readOnly": true,
+            "format": "date-time",
+            "description": "The creation timestamp of the payment.\n",
+            "example": "2024-12-06T11:38:37.130Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "readOnly": true,
+            "format": "date-time",
+            "description": "The last update timestamp of the payment.\n",
+            "example": "2024-12-06T11:38:37.130Z"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "The unique identifier for the customer.\n",
+            "example": "cust_E602sMzgjpDC"
+          },
+          "merchant_id": {
+            "type": "string",
+            "description": "The unique identifier for the merchant (business) that owns the payment.\n",
+            "example": "merch_68c777fcOOMpl"
+          },
+          "product_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "The name of the product associated with the payment.\n",
+            "example": "ShieldGuard Insurance"
+          },
+          "product_description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "The description of the product associated with the payment.\n",
+            "example": "Simple, monthly insurance plan that covers your basic belongings and key digital assets"
+          },
+          "country": {
+            "type": "string",
+            "format": "iso-3166-1-alpha-3, case-insensitive",
+            "description": "The country of the sender. Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+            "example": "Ind"
+          },
+          "fees": {
+            "type": "object",
+            "deprecated": true,
+            "description": "**Deprecated.** Use `fee_breakdown` instead. The fees charged for the payment, aggregated per fee type. `fee_breakdown` provides a per-bearer breakdown including any applicable taxes.\n",
+            "properties": {
+              "txn_fee": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The transaction fee charged for the payment.\n"
+              },
+              "fx_fee": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The foreign exchange fee charged for the payment.\n"
+              },
+              "referral_fee": {
+                "$ref": "#/components/schemas/Money",
+                "description": "The referral fee charged for the payment.\n"
+              }
+            }
+          },
+          "fee_breakdown": {
+            "type": "object",
+            "description": "A detailed breakdown of the fees charged for the payment, grouped by fee type. Each fee type holds one entry per fee bearer, with any applicable taxes (for example, GST) nested under the entry's `taxes` array.\n",
+            "properties": {
+              "fx_fee": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FeeBreakdownEntry"
+                },
+                "description": "Foreign exchange fee lines.\n"
+              },
+              "txn_fee": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FeeBreakdownEntry"
+                },
+                "description": "Transaction fee lines.\n"
+              },
+              "referral_fee": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/FeeBreakdownEntry"
+                },
+                "description": "Referral fee lines.\n"
+              }
+            }
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttachedDocument"
+            },
+            "description": "The attached documents for the payment.\n"
+          },
+          "settlement_id": {
+            "type": "string",
+            "description": "A unique identifier generated by Glomo for the settlement batch in which this payment is included. This ID can be used to track and reconcile payments against corresponding settlements.\n"
+          },
+          "funds_available": {
+            "type": "boolean",
+            "description": "Indicates whether the funds for this payment are currently available with Glomo.\n\n**Values:**\n\n- `true` - Funds are available with Glomo and can be included in a payout or settlement\n- `false` - Funds are still in transit with Glomo's payment partners and are not yet available for use\n"
+          },
+          "payment_method": {
+            "type": "object",
+            "description": "Specifies the method used by the customer to complete the payment.\n",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bank_transfer",
+                  "pay_via_bank",
+                  "card"
+                ],
+                "description": "The type of payment method used for the transaction.\n",
+                "example": "bank_transfer"
+              },
+              "details": {
+                "type": "object",
+                "description": "Additional details specific to the payment method type. The structure varies based on the payment method type.\n",
+                "oneOf": [
+                  {
+                    "title": "Bank Transfer Details",
+                    "properties": {
+                      "sender_name": {
+                        "type": "string",
+                        "description": "The name of the sender as provided by the sending bank.\n",
+                        "example": "Vaibhav LRS"
+                      },
+                      "sender_country": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The ISO 3166-1 alpha-3 country code of the sender.\n",
+                        "example": "IND"
+                      },
+                      "sender_account_number": {
+                        "type": "string",
+                        "description": "The account number of the sender.\n",
+                        "example": "5454545454"
+                      },
+                      "receiver_account_number": {
+                        "type": "string",
+                        "description": "The account number credited by the transfer — the virtual account assigned to you.\n",
+                        "example": "98765432109876"
+                      },
+                      "sender_bank_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The name of the sender's bank.\n",
+                        "example": "JPMORGAN CHASE BANK,N.A."
+                      },
+                      "sender_bank_country": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The ISO 3166-1 alpha-3 country code of the sender's bank. This is the country of the bank, which can differ from `sender_country`.\n",
+                        "example": "USA"
+                      },
+                      "sender_bank_address": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The registered address of the sender's bank.\n",
+                        "example": "270 Park Avenue, New York"
+                      },
+                      "swift_code": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The sender bank's ISO 9362 BIC. `null` while the identifier is not available.\n",
+                        "example": "CHASUS33"
+                      },
+                      "local_routing_number": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The sender bank's domestic routing identifier — a US ABA routing number, a UK sort code, or an Australian BSB. `null` while the identifier is not available.\n",
+                        "example": "300129"
+                      },
+                      "external_reference": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The reference supplied by the partner bank for the incoming transfer, for reconciliation against your own records.\n",
+                        "example": "GLM7A2C1"
+                      },
+                      "transfer_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "swift",
+                          "local",
+                          null
+                        ],
+                        "description": "The rail the funds arrived on. `swift` for a cross-border SWIFT transfer, `local` for a domestic scheme such as ACH, Faster Payments or SEPA.\n",
+                        "example": "swift"
+                      },
+                      "remittance_information": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Additional remittance information provided with the payment.\n",
+                        "example": "PaymentForLrs"
+                      }
+                    }
+                  },
+                  {
+                    "title": "Pay Via Bank Details",
+                    "properties": {
+                      "sender_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The name of the sender as provided by the sending bank.\n",
+                        "example": "Vaibhav LRS"
+                      },
+                      "sender_country": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The ISO 3166-1 alpha-3 country code of the sender.\n",
+                        "example": "IND"
+                      },
+                      "sender_account_number": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The account number debited.\n",
+                        "example": "5454545454"
+                      },
+                      "sender_bank_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The name of the sender's bank.\n",
+                        "example": "HDFC Bank"
+                      },
+                      "sender_bank_country": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The ISO 3166-1 alpha-3 country code of the sender's bank.\n",
+                        "example": "IND"
+                      },
+                      "sender_bank_address": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The registered address of the sender's bank.\n",
+                        "example": "Senapati Bapat Marg, Mumbai"
+                      },
+                      "swift_code": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The sender bank's ISO 9362 BIC. `null` while the identifier is not available.\n",
+                        "example": "HDFCINBB"
+                      },
+                      "local_routing_number": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The sender bank's domestic routing identifier — a US ABA routing number, a UK sort code, or an Australian BSB. `null` while the identifier is not available.\n",
+                        "example": "300129"
+                      },
+                      "external_reference": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The reference supplied by the partner bank, for reconciliation against your own records.\n",
+                        "example": "GLM7A2C1"
+                      },
+                      "transfer_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "swift",
+                          "local",
+                          null
+                        ],
+                        "description": "The rail used to debit the sender.\n",
+                        "example": "swift"
+                      },
+                      "remittance_information": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Additional remittance information provided with the payment.\n",
+                        "example": "PaymentForLrs"
+                      }
+                    }
+                  },
+                  {
+                    "title": "Card Details",
+                    "properties": {
+                      "card_network": {
+                        "type": "string",
+                        "description": "The card network (e.g., Visa, Mastercard, American Express).\n",
+                        "example": "Visa"
+                      },
+                      "card_type": {
+                        "type": "string",
+                        "description": "The type of card (e.g., credit, debit).\n",
+                        "example": "credit"
+                      },
+                      "end_digits": {
+                        "type": "string",
+                        "description": "The last few digits of the card number for identification.\n",
+                        "example": "1234"
+                      },
+                      "country_code": {
+                        "type": "string",
+                        "description": "The country code associated with the card.\n",
+                        "example": "US"
+                      },
+                      "card_holder_name": {
+                        "type": "string",
+                        "description": "The name of the card holder.\n",
+                        "example": "John Doe"
+                      },
+                      "card_bin": {
+                        "type": "string",
+                        "description": "The IIN (also known as BIN) is the card-number prefix that identifies the network, card type and issuing country.\n",
+                        "example": "400000"
+                      },
+                      "issuer_name": {
+                        "type": "string",
+                        "description": "The name of the card issuing bank or financial institution.\n",
+                        "example": "Chase Bank"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "examples": [
+              {
+                "summary": "Bank Transfer Payment Method (SWIFT, sender bank identified by BIC)",
+                "value": {
+                  "type": "bank_transfer",
+                  "details": {
+                    "sender_name": "REDACTED",
+                    "sender_account_number": "REDACTED",
+                    "receiver_account_number": "REDACTED",
+                    "sender_country": "IND",
+                    "sender_bank_name": "REDACTED",
+                    "sender_bank_country": "USA",
+                    "sender_bank_address": "REDACTED",
+                    "swift_code": "REDACTED",
+                    "local_routing_number": null,
+                    "external_reference": "GLM7A2C1",
+                    "transfer_type": "swift",
+                    "remittance_information": "PaymentForLrs"
+                  }
+                }
+              },
+              {
+                "summary": "Bank Transfer Payment Method (local, sender bank identified by a UK sort code)",
+                "value": {
+                  "type": "bank_transfer",
+                  "details": {
+                    "sender_name": "REDACTED",
+                    "sender_account_number": "REDACTED",
+                    "receiver_account_number": "REDACTED",
+                    "sender_country": "GBR",
+                    "sender_bank_name": "REDACTED",
+                    "sender_bank_country": "GBR",
+                    "sender_bank_address": "REDACTED",
+                    "swift_code": null,
+                    "local_routing_number": "REDACTED",
+                    "external_reference": "GLM7A2C1 INVOICE 4471",
+                    "transfer_type": "local"
+                  }
+                }
+              },
+              {
+                "summary": "Pay Via Bank Payment Method (LRS remittance)",
+                "value": {
+                  "type": "pay_via_bank",
+                  "details": {
+                    "sender_name": "REDACTED",
+                    "sender_country": "IND",
+                    "sender_account_number": "REDACTED",
+                    "sender_bank_name": "REDACTED",
+                    "sender_bank_country": null,
+                    "sender_bank_address": null,
+                    "swift_code": null,
+                    "local_routing_number": null,
+                    "external_reference": null,
+                    "transfer_type": "swift",
+                    "remittance_information": "PaymentForLrs"
+                  }
+                }
+              },
+              {
+                "summary": "Card Payment Method",
+                "value": {
+                  "type": "card",
+                  "details": {
+                    "card_network": "Visa",
+                    "card_type": "credit",
+                    "end_digits": "1234",
+                    "country_code": "US",
+                    "card_holder_name": "REDACTED",
+                    "card_bin": "400000",
+                    "issuer_name": "REDACTED"
+                  }
+                }
+              }
+            ]
+          },
+          "auto_debit?": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "readOnly": true,
+            "description": "Indicates whether the payment was made via auto-debit. Present only for subscription payments; `true` for an auto-debit payment, `false` for a manual subscription payment.\n",
+            "example": true
+          }
+        }
+      },
+      "PageMeta": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "integer",
+            "description": "The current page number.\n",
+            "example": 2
+          },
+          "previous": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The previous page number.\n",
+            "example": 1
+          },
+          "next": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The next page number.\n",
+            "example": 3
+          },
+          "per_page": {
+            "type": "integer",
+            "description": "The number of items per page.\n",
+            "example": 20
+          },
+          "pages": {
+            "type": "integer",
+            "description": "The total number of pages.\n",
+            "example": 10
+          },
+          "count": {
+            "type": "integer",
+            "description": "The total number of items.\n",
+            "example": 200
+          }
+        }
+      },
+      "BeneficiaryV2CreateRequest": {
+        "type": "object",
+        "required": [
+          "category",
+          "beneficiary"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "payout",
+              "lrs"
+            ],
+            "description": "The category of the beneficiary.\n\n- `payout` — the primary use case. Processes a payout from your Glomo balance.\n- `lrs` — a specific case. Processes an LRS (Liberalised Remittance Scheme) payin whose funds\n  go directly to a customer-specific bank account rather than into your Glomo balance.\n",
+            "example": "payout"
+          },
+          "beneficiary": {
+            "type": "object",
+            "required": [
+              "name",
+              "type",
+              "address"
+            ],
+            "description": "The beneficiary details including name, contact information, and address.\n",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the beneficiary. This is a required field.\n",
+                "example": "ACME Corporation"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "individual",
+                  "business"
+                ],
+                "description": "The type of beneficiary. Must be either `individual` or `business`.\n",
+                "example": "business"
+              },
+              "email": {
+                "type": "string",
+                "format": "email",
+                "description": "The email address of the beneficiary.\n",
+                "example": "redacted@example.com"
+              },
+              "phone": {
+                "type": "string",
+                "description": "The phone number of the beneficiary.\n",
+                "example": "+1-555-123-4567"
+              },
+              "nickname": {
+                "type": "string",
+                "description": "A nickname for the beneficiary. If not provided, it will be auto-generated as \"{beneficiary_name} - {bank_name}\".\n",
+                "example": "ACME Primary Account"
+              },
+              "address": {
+                "type": "object",
+                "required": [
+                  "address_line1",
+                  "city",
+                  "state",
+                  "country_code",
+                  "postal_code"
+                ],
+                "description": "The address of the beneficiary. All fields except address_line2 are required.\n",
+                "properties": {
+                  "address_line1": {
+                    "type": "string",
+                    "description": "The street address of the beneficiary (required).",
+                    "example": "123 Business Park"
+                  },
+                  "address_line2": {
+                    "type": "string",
+                    "description": "The second line of street address of the beneficiary (optional).",
+                    "example": "Suite 100"
+                  },
+                  "city": {
+                    "type": "string",
+                    "description": "The city where the beneficiary is located (required).",
+                    "example": "New York"
+                  },
+                  "state": {
+                    "type": "string",
+                    "description": "The state or administrative area where the beneficiary is located (required).",
+                    "example": "NY"
+                  },
+                  "country_code": {
+                    "type": "string",
+                    "format": "iso-3166-1-alpha-3",
+                    "description": "The country where the beneficiary is located (required). Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+                    "example": "USA"
+                  },
+                  "postal_code": {
+                    "type": "string",
+                    "description": "The postal code of the beneficiary's address (required).",
+                    "example": "10001"
+                  }
+                }
+              },
+              "documents": {
+                "type": "array",
+                "description": "Optional list of document IDs to attach to the beneficiary.\n",
+                "items": {
+                  "type": "string"
+                },
+                "example": [
+                  "doc_68e7980auYRAs"
+                ]
+              }
+            }
+          },
+          "bank_account": {
+            "type": "object",
+            "required": [
+              "account_number",
+              "currency"
+            ],
+            "description": "The bank account details of the beneficiary.\n\nFor `category: payout`, `name` and `address` are resolved from the `swift_code`, the\n`local_routing_number`, or an IBAN `account_number`. Send them only if the identifier cannot be\nresolved, or to override the resolved values. Both remain required for `category: lrs`.\n\nRouting identifier rules differ by category:\n\n- `category: lrs` — `local_routing_number` is required. `swift_code` is optional.\n- `category: payout` — provide exactly one of `swift_code` or `local_routing_number`, except\n  for EUR and AED accounts identified by an IBAN alone, which send neither.\n\nFor the rails each identifier maps to, see\n[Payout rails](/payout/rails).\n",
+            "properties": {
+              "account_number": {
+                "type": "string",
+                "description": "The account number of the beneficiary (required).",
+                "example": "1234567890"
+              },
+              "name": {
+                "type": "string",
+                "description": "The name of the bank where the account is held. Required for `category: lrs`, optional for `category: payout`.\n",
+                "example": "Citibank NA"
+              },
+              "swift_code": {
+                "type": "string",
+                "description": "The SWIFT/BIC code of the bank. Must be 8-11 characters with first 6 being letters only. For LRS category it is optional, and must be exactly 8 characters (no branch suffix like XXX). For payout category, see [Payout rails](/payout/rails).\n",
+                "example": "CITIUS33"
+              },
+              "local_routing_number": {
+                "type": "string",
+                "description": "The local routing code or domestic clearing code of the bank account. Required for LRS category, optional for payout category. For reference, this is the IFSC code in India, the sort code in the UK, ABA in the US, etc. For payout category, see [Payout rails](/payout/rails).\n",
+                "example": "021000089"
+              },
+              "currency": {
+                "type": "string",
+                "description": "The currency of the bank account (required).",
+                "example": "USD"
+              },
+              "address": {
+                "type": "object",
+                "required": [
+                  "address_line1",
+                  "city",
+                  "state",
+                  "country_code",
+                  "postal_code"
+                ],
+                "description": "The address of the bank. Required for `category: lrs`, optional for `category: payout`. When sent, all fields except address_line2 are required.\n",
+                "properties": {
+                  "address_line1": {
+                    "type": "string",
+                    "description": "The street address of the bank (required).",
+                    "example": "388 Greenwich Street"
+                  },
+                  "address_line2": {
+                    "type": "string",
+                    "description": "The second line of street address of the bank (optional).",
+                    "example": ""
+                  },
+                  "city": {
+                    "type": "string",
+                    "description": "The city where the bank is located (required).",
+                    "example": "New York"
+                  },
+                  "state": {
+                    "type": "string",
+                    "description": "The state or administrative area where the bank is located (required).",
+                    "example": "NY"
+                  },
+                  "country_code": {
+                    "type": "string",
+                    "format": "iso-3166-1-alpha-3",
+                    "description": "The country where the bank is located (required). Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+                    "example": "USA"
+                  },
+                  "postal_code": {
+                    "type": "string",
+                    "description": "The postal code of the bank's address (required).",
+                    "example": "10013"
+                  }
+                }
+              },
+              "intermediate_bank": {
+                "type": "object",
+                "description": "Details of the intermediate/correspondent bank. **`swift_code` is required for LRS category beneficiaries.** Optional for payout category beneficiaries.\n",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The name of the intermediate bank (optional).",
+                    "example": "JPMorgan Chase Bank"
+                  },
+                  "country": {
+                    "type": "string",
+                    "format": "iso-3166-1-alpha-3",
+                    "description": "The country of the intermediate bank (optional). Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+                    "example": "USA"
+                  },
+                  "swift_code": {
+                    "type": "string",
+                    "description": "The SWIFT/BIC code of the correspondent/intermediary bank used to route the remittance. Required for LRS category, optional for payout category.\n",
+                    "example": "CHASUS33"
+                  },
+                  "account_number": {
+                    "type": "string",
+                    "description": "The account number at the intermediate bank (optional).",
+                    "example": "123456789"
+                  }
+                }
+              }
+            }
+          },
+          "upi_account": {
+            "type": "object",
+            "description": "UPI account details. Provide either bank_account or upi_account, not both.\n",
+            "properties": {
+              "upi_id": {
+                "type": "string",
+                "description": "The UPI ID of the beneficiary.",
+                "example": "1111111111@ybl"
+              }
+            }
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          }
+        }
+      },
+      "BeneficiaryV2": {
+        "type": "object",
+        "x-tags": [
+          "beneficiary_v2"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the beneficiary.\n",
+            "example": "ben_5JU9yv0lGSUP"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the beneficiary.\n",
+            "example": "ACME Corporation"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "individual",
+              "business"
+            ],
+            "description": "The type of beneficiary.\n",
+            "example": "business"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "payout",
+              "lrs"
+            ],
+            "readOnly": true,
+            "description": "The category of the beneficiary.\n",
+            "example": "payout"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The email address of the beneficiary.\n",
+            "example": "redacted@example.com"
+          },
+          "phone": {
+            "type": "string",
+            "description": "The phone number of the beneficiary.\n",
+            "example": "+1-555-123-4567"
+          },
+          "nickname": {
+            "type": "string",
+            "description": "A nickname for the beneficiary. If not provided, auto-generated as \"{beneficiary_name} - {bank_name}\".\n",
+            "example": "ACME Primary Account"
+          },
+          "address": {
+            "type": "object",
+            "description": "The address of the beneficiary.\n",
+            "properties": {
+              "address_line1": {
+                "type": "string",
+                "description": "The street address of the beneficiary.",
+                "example": "123 Business Park"
+              },
+              "address_line2": {
+                "type": "string",
+                "description": "The second line of street address of the beneficiary.",
+                "example": "Suite 100"
+              },
+              "city": {
+                "type": "string",
+                "description": "The city where the beneficiary is located.",
+                "example": "New York"
+              },
+              "state": {
+                "type": "string",
+                "description": "The state or administrative area where the beneficiary is located.",
+                "example": "NY"
+              },
+              "country_code": {
+                "type": "string",
+                "format": "iso-3166-1-alpha-3",
+                "description": "The country where the beneficiary is located. Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+                "example": "USA"
+              },
+              "postal_code": {
+                "type": "string",
+                "description": "The postal code of the beneficiary's address.",
+                "example": "10001"
+              }
+            }
+          },
+          "bank_account": {
+            "type": "object",
+            "description": "The bank account details of the beneficiary.\n",
+            "properties": {
+              "account_number": {
+                "type": "string",
+                "description": "The account number of the beneficiary.",
+                "example": "1234567890"
+              },
+              "name": {
+                "type": "string",
+                "description": "The name of the bank where the account is held.",
+                "example": "Citibank NA"
+              },
+              "swift_code": {
+                "type": "string",
+                "description": "The SWIFT/BIC code of the bank. Must be 8-11 characters with first 6 being letters only.\n",
+                "example": "CITIUS33"
+              },
+              "local_routing_number": {
+                "type": "string",
+                "description": "The local routing code or domestic clearing code of the bank account. For reference, this is the IFSC code in India, SORT in UK, ABA in the US, etc.\n",
+                "example": "021000089"
+              },
+              "currency": {
+                "type": "string",
+                "description": "The currency of the bank account.",
+                "example": "USD"
+              },
+              "address": {
+                "type": "object",
+                "description": "The address of the bank.",
+                "properties": {
+                  "address_line1": {
+                    "type": "string",
+                    "description": "The street address of the bank.",
+                    "example": "388 Greenwich Street"
+                  },
+                  "address_line2": {
+                    "type": "string",
+                    "description": "The second line of street address of the bank.",
+                    "example": ""
+                  },
+                  "city": {
+                    "type": "string",
+                    "description": "The city where the bank is located.",
+                    "example": "New York"
+                  },
+                  "state": {
+                    "type": "string",
+                    "description": "The state or administrative area where the bank is located.",
+                    "example": "NY"
+                  },
+                  "country_code": {
+                    "type": "string",
+                    "format": "iso-3166-1-alpha-3",
+                    "description": "The country where the bank is located. Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+                    "example": "USA"
+                  },
+                  "postal_code": {
+                    "type": "string",
+                    "description": "The postal code of the bank's address.",
+                    "example": "10013"
+                  }
+                }
+              },
+              "intermediate_bank": {
+                "type": "object",
+                "description": "Details of the intermediate/correspondent bank. Present for LRS category beneficiaries (swift_code is required at creation). May be null for payout category beneficiaries.\n",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The name of the intermediate bank.",
+                    "example": "JPMorgan Chase Bank"
+                  },
+                  "country": {
+                    "type": "string",
+                    "format": "iso-3166-1-alpha-3",
+                    "description": "The country of the intermediate bank. Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+                    "example": "USA"
+                  },
+                  "swift_code": {
+                    "type": "string",
+                    "description": "The SWIFT code of the intermediate bank.",
+                    "example": "CHASUS33"
+                  },
+                  "account_number": {
+                    "type": "string",
+                    "description": "The account number at the intermediate bank.",
+                    "example": "123456789"
+                  }
+                }
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "active",
+              "rejected"
+            ],
+            "readOnly": true,
+            "description": "The current review status of the beneficiary.\n",
+            "example": "pending"
+          },
+          "documents": {
+            "type": "array",
+            "readOnly": true,
+            "description": "List of document IDs attached to the beneficiary.\n",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "doc_68e7980auYRAs"
+            ]
+          },
+          "upi_account": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The UPI account details of the beneficiary. Present when the beneficiary uses UPI, otherwise null.\n",
+            "properties": {
+              "upi_id": {
+                "type": "string",
+                "description": "The UPI ID of the beneficiary.",
+                "example": "1111111111@ybl"
+              }
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "description": "Timestamp representing when the beneficiary was created in ISO 8601 format.\n",
+            "example": "2025-01-15T10:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "description": "Timestamp representing when the beneficiary was last updated in ISO 8601 format.\n",
+            "example": "2025-01-15T10:00:00Z"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/Notes"
+          }
+        }
+      },
+      "EntityNotFound": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "Not found"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Entity not found",
+            "enum": [
+              "Entity not found"
+            ]
+          }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "x-tags": [
+          "Customer"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The unique identifier for the customer.\n",
+            "example": "cust_5JU9yv0lGSUP"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the customer.\n",
+            "example": "John Doe"
+          },
+          "customer_type": {
+            "type": "string",
+            "enum": [
+              "individual",
+              "business"
+            ],
+            "description": "The type of customer\n"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The email address of the customer.\n",
+            "example": "redacted@example.com"
+          },
+          "phone": {
+            "type": "string",
+            "description": "The phone number of the customer, with country code. Phone number validation is done using the [phonelib](https://github.com/daddyz/phonelib?tab=readme-ov-file) library.\n",
+            "example": "+91-9023456789"
+          },
+          "dob": {
+            "type": "string",
+            "description": "The date of birth of the customer\n",
+            "example": "2003-11-29"
+          },
+          "nationality": {
+            "type": "string",
+            "description": "The nationality of the customer\n",
+            "example": "IND"
+          },
+          "tax_identification_number": {
+            "type": "string",
+            "description": "**Applicable only to the LRS (Liberalised Remittance Scheme / resident-India remittance) flow.** The customer's PAN (tax identification number), populated only for customers onboarded under LRS and absent otherwise. Searchable via the `tax_identification_number` query parameter on the list-customers endpoint.\n",
+            "example": "BFQPG7654R"
+          },
+          "address": {
+            "type": "string",
+            "description": "The street address of the customer.\n",
+            "example": "123 Main St"
+          },
+          "city": {
+            "type": "string",
+            "description": "The city where the customer is located.\n",
+            "example": "Anytown"
+          },
+          "state": {
+            "type": "string",
+            "description": "The state where the customer is located.\n",
+            "example": "Anystate"
+          },
+          "country": {
+            "type": "string",
+            "format": "iso-3166-1-alpha-3",
+            "description": "The country where the customer is located. Country should be sent as a [ISO 3166-1 alpha-3](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) code.\n",
+            "example": "IND"
+          },
+          "pincode": {
+            "type": "string",
+            "description": "The postal code/pincode of the customer's address. [List of countries where pincode is mandatory](/platform/countries#countries-requiring-pincode) are listed here.\n",
+            "example": "560048"
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The status of the customer.\n",
+            "example": "active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the customer was created\n",
+            "example": "2021-06-01T12:00:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "timestamp",
+            "readOnly": true,
+            "description": "Timestamp representing when the customer was last updated\n",
+            "example": "2021-06-01T12:00:00Z"
+          }
+        }
+      },
+      "Notes": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Optional key-value pairs for attaching custom metadata (e.g. invoice references, project codes). Keys must be strings and cannot collide with reserved field names. If your business has custom field rules configured (e.g. enum constraints), values are validated against those rules. Each key appears as a separate column in CSV report exports, with corresponding values populating the rows.\n",
+        "example": {
+          "invoice_ref": "INV-2026-001",
+          "project": "Alpha"
+        }
+      },
+      "AttachedDocument": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The unique identifier for the Document.\n",
+            "example": "doc_nYUqLpuYQ0M8"
+          },
+          "type": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The type of the Document.\n",
+            "example": "invoice"
+          },
+          "status": {
+            "type": "string",
+            "readOnly": true,
+            "enum": [
+              "pending",
+              "uploaded",
+              "rejected",
+              "approved"
+            ]
+          },
+          "rfi_doc_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The unique identifier for the RFI Document. This will be `null` if the document is not an RFI Document.\n",
+            "example": "rfidoc_nYUqLpuYQ0M8"
+          }
+        }
+      },
+      "Money": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "A positive integer representing the smallest currency unit.  For example, if the amount is $299.00, then pass 29900 in this field.  In the case of three decimal currencies, such as KWD, BHD and OMR, to represent an amount of 295.991, pass the value as 295990.  And in the case of zero decimal currencies such as JPY, for amount ￥295, pass the value as 295.\n",
+            "example": 1000
+          },
+          "currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          }
+        }
+      },
+      "FeeBreakdownEntry": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "The fee amount in the smallest currency unit (cents), aggregated across all rules for this fee bearer. For example, 250 cents is $2.50.\n",
+            "example": 250
+          },
+          "currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          },
+          "bearer": {
+            "type": "string",
+            "enum": [
+              "customer",
+              "merchant"
+            ],
+            "description": "The party bearing this fee.\n",
+            "example": "merchant"
+          },
+          "collection_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "immediate",
+              "deferred"
+            ],
+            "description": "When the fee is collected. Customer-borne fees are always collected immediately; merchant-borne fees follow the payment's collection mode.\n",
+            "example": "immediate"
+          },
+          "taxes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxLine"
+            },
+            "description": "Taxes applied on this fee (for example, GST). Empty when no tax applies to the underlying rules.\n"
+          }
+        }
+      },
+      "TaxLine": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "The tax amount in the smallest currency unit (cents). For example, 1800 cents is $18.00.\n",
+            "example": 1800
+          },
+          "currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "description": "The currency code in [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) format. For example, USD.\n",
+            "example": "USD"
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the tax applied on the fee. For example, GST.\n",
+            "example": "GST"
+          },
+          "bps": {
+            "type": "number",
+            "description": "The tax rate in basis points. For example, 1800 represents 18%.\n",
+            "example": 1800
+          }
+        }
+      }
+    },
+    "parameters": {
+      "BeforeParam": {
+        "in": "query",
+        "name": "before",
+        "schema": {
+          "type": "string",
+          "format": "timestamp"
+        },
+        "description": "[ISO-8601](https://en.wikipedia.org/wiki/ISO_8601) timestamp in UTC to filter resources created before this time. Use this to avoid `Page drift` issue. See [Pagination parameters](/platform/pagination#parameters) for more details.\n",
+        "example": "2025-02-18T12:03:44Z"
+      },
+      "AfterParam": {
+        "in": "query",
+        "name": "after",
+        "schema": {
+          "type": "string",
+          "format": "timestamp"
+        },
+        "description": "[ISO-8601](https://en.wikipedia.org/wiki/ISO_8601) timestamp in UTC to filter resources created after this time. Use this to avoid `Page drift` issue. See [Pagination parameters](/platform/pagination#parameters) for more details.\n",
+        "example": "2025-01-18T12:03:44Z"
+      },
+      "PerPageParam": {
+        "in": "query",
+        "name": "per_page",
+        "schema": {
+          "type": "integer",
+          "default": 20
+        },
+        "description": "Number of resources per page. Should be between 1 and 100."
+      },
+      "PageParam": {
+        "in": "query",
+        "name": "page",
+        "schema": {
+          "type": "integer",
+          "default": 1
+        },
+        "description": "Page number for pagination. Starts from 1. Get the next page number from the `next` field in the response."
+      }
+    }
+  }
+}

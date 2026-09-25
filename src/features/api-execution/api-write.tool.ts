@@ -20,10 +20,10 @@ export class ApiWriteTool extends BaseTool {
     );
 
     this.config = {
-      name: 'glomopay_api_write',
-      title: 'Glomopay API Write',
+      name: 'glomo_api_write',
+      title: 'glomo API Write',
       description:
-        "Execute a write (POST/PATCH/DELETE) Glomopay API operation by operationId against the caller's account. Only allowlisted write operations are permitted.",
+        "Execute a write (POST/PATCH/DELETE) glomo API operation by operationId against the caller's account. Only allowlisted write operations are permitted.",
       inputSchema: {
         operationId,
         params: z.record(z.string(), z.unknown()).optional().describe('Path, query and body parameters, flattened into a single object.'),
