@@ -6,14 +6,17 @@ import { Dispatcher, loadSpecIndex } from '@/core/dispatcher/dispatcher.module';
 import { executionAllowlist } from '@/features/allowlist/allowlist.module';
 import { ApiReadTool, ApiWriteTool } from '@/features/api-execution/api-execution.module';
 import { HealthCheckTool } from '@/features/health-check/health-check.module';
+import { DocsIndex } from '@/core/docs/docs.module';
+import { DocsSearchTool } from '@/features/docs-search/docs-search.module';
 import { ApiClient } from '@/shared/api-client/api-client.module';
 
 export interface ICreateAppOptions {
   specPath: string;
   apiHost?: string;
+  docsCorpusPath?: string;
 }
 
-export async function createApp({ specPath, apiHost }: ICreateAppOptions): Promise<Express> {
+export async function createApp({ specPath, apiHost, docsCorpusPath }: ICreateAppOptions): Promise<Express> {
   const apiClient = new ApiClient({ baseURL: apiHost });
   const specIndex = await loadSpecIndex(specPath);
 
@@ -28,6 +31,9 @@ export async function createApp({ specPath, apiHost }: ICreateAppOptions): Promi
   const dispatcher = new Dispatcher(specIndex, executionAllowlist, apiClient);
 
   const mcpServer = new MCPServer();
+  if (docsCorpusPath) {
+    mcpServer.registerTool(new DocsSearchTool(DocsIndex.fromCorpusFile(docsCorpusPath)));
+  }
   mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
   mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
   mcpServer.registerTool(new HealthCheckTool());
