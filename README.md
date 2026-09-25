@@ -12,6 +12,13 @@ tool surface cannot drift from the documented API.
 
 ## Tool surface
 
+Discovery is exposed through two credential-free tools:
+
+| Tool                   | Description                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------- |
+| `glomopay_api_search`  | Find the right operation by keyword; returns ranked `operationId`/method/path.   |
+| `glomopay_api_details` | Return full parameter and request/response schema detail for given `operationId`s. |
+
 Execution is exposed through two generic tools plus a health check:
 
 | Tool                 | Methods            | Description                                          |
@@ -19,6 +26,12 @@ Execution is exposed through two generic tools plus a health check:
 | `glomopay_api_read`  | GET                | Run a read-only operation by `operationId`.          |
 | `glomopay_api_write` | POST/PATCH/DELETE  | Run a write operation by `operationId`.              |
 | `healthCheck`        | —                  | Smoke-test tool; returns a greeting.                 |
+
+The discovery tools let an agent locate the right `operationId` and inspect its
+schema before calling it. Both are backed by the same OpenAPI spec and scoped to
+the same allowlist as execution, so search and details only ever surface
+operations that are actually callable. They need no credential (the caller's
+bearer is still required at the transport, see below).
 
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
 `createCustomer`) and a flat `params` object. The dispatcher resolves the

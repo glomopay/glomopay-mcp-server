@@ -6,50 +6,106 @@
     "/customer": {
       "get": {
         "operationId": "getCustomers",
-        "parameters": [{ "name": "page", "in": "query", "schema": { "type": "integer" } }],
+        "summary": "List customers",
+        "description": "Return a paginated list of customers on the account.",
+        "tags": ["Customer"],
+        "parameters": [
+          { "name": "page", "in": "query", "description": "1-based page number.", "schema": { "type": "integer" } }
+        ],
         "responses": { "200": { "description": "ok" } }
       },
       "post": {
         "operationId": "createCustomer",
+        "summary": "Create a customer",
+        "description": "Create a new customer record.",
+        "tags": ["Customer"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "email"],
+                "properties": {
+                  "name": { "type": "string", "description": "Full legal name." },
+                  "email": { "type": "string", "format": "email" }
+                }
+              }
+            }
+          }
+        },
         "responses": { "201": { "description": "created" } }
       }
     },
     "/payouts/{id}": {
       "get": {
         "operationId": "getPayoutById",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "summary": "Get a payout by ID",
+        "description": "Fetch a single payout by its identifier.",
+        "tags": ["Payout"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "description": "Payout ID.", "schema": { "type": "string" } }],
         "responses": { "200": { "description": "ok" } }
       }
     },
     "/payouts/{id}/cancel": {
       "patch": {
         "operationId": "cancelPayout",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "summary": "Cancel a payout",
+        "description": "Cancel a payout that has not yet been settled.",
+        "tags": ["Payout"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "description": "Payout ID.", "schema": { "type": "string" } }],
         "responses": { "200": { "description": "ok" } }
       }
     },
     "/platform/merchants": {
       "post": {
         "operationId": "onboardMerchant",
+        "summary": "Onboard a merchant",
+        "description": "Onboard a new merchant onto the platform. Platform-partner operation.",
+        "tags": ["platform"],
         "responses": { "201": { "description": "created" } }
       }
     },
     "/v2/beneficiaries": {
       "post": {
         "operationId": "createBeneficiaryV2",
+        "summary": "Create a beneficiary",
+        "description": "Register a beneficiary (the recipient of a payout) so funds can be sent to them.",
+        "tags": ["beneficiary_v2"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["nickname", "currency"],
+                "properties": {
+                  "nickname": { "type": "string" },
+                  "currency": { "type": "string", "enum": ["USD", "EUR", "GBP"] }
+                }
+              }
+            }
+          }
+        },
         "responses": { "201": { "description": "created" } }
       }
     },
     "/v2/beneficiaries/{id}": {
       "get": {
         "operationId": "getBeneficiaryByIdV2",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "summary": "Get a beneficiary by ID",
+        "description": "Fetch a single beneficiary by its identifier.",
+        "tags": ["beneficiary_v2"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "description": "Beneficiary ID.", "schema": { "type": "string" } }],
         "responses": { "200": { "description": "ok" } }
       }
     },
     "/virtual-accounts": {
       "delete": {
         "operationId": "closeVirtualAccount",
+        "summary": "Close a virtual account",
+        "description": "Close a virtual account for a given payment type and currency.",
+        "tags": ["virtual_account"],
         "parameters": [
           { "name": "payment_type", "in": "query", "required": true, "schema": { "type": "string" } },
           { "name": "currency", "in": "query", "required": true, "schema": { "type": "string" } }

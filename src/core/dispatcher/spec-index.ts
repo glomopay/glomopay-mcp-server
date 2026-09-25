@@ -13,7 +13,13 @@ export interface ISpecOperation {
 
 export type TSpecIndex = ReadonlyMap<string, ISpecOperation>;
 
-const HTTP_METHODS: THttpMethod[] = ['GET', 'POST', 'PATCH', 'DELETE'];
+export interface IParsedSpec {
+  document: OpenAPIV3.Document;
+  prefix: string;
+  defaultVersion: string;
+}
+
+export const HTTP_METHODS: THttpMethod[] = ['GET', 'POST', 'PATCH', 'DELETE'];
 const VERSION_SEGMENT = /^\/v\d+\//;
 
 function parseServerPath(document: OpenAPIV3.Document): { prefix: string; defaultVersion: string } {
@@ -38,15 +44,18 @@ function parseServerPath(document: OpenAPIV3.Document): { prefix: string; defaul
 // The spec server is /api/v1 but v2 ops are written /v2/...; the service mounts
 // /api/v1 and /api/v2 as siblings. Keep an explicit /vN/ prefix, otherwise
 // prepend the server's default version — naive concatenation would give /api/v1/v2/...
-function normalisePath(rawPath: string, prefix: string, defaultVersion: string): string {
+export function normalisePath(rawPath: string, prefix: string, defaultVersion: string): string {
   if (VERSION_SEGMENT.test(rawPath)) return `${prefix}${rawPath}`;
   return defaultVersion ? `${prefix}/${defaultVersion}${rawPath}` : `${prefix}${rawPath}`;
 }
 
-export async function loadSpecIndex(specFilePath: string): Promise<TSpecIndex> {
+export async function loadSpecDocument(specFilePath: string): Promise<IParsedSpec> {
   const document = (await SwaggerParser.validate(specFilePath)) as OpenAPIV3.Document;
   const { prefix, defaultVersion } = parseServerPath(document);
+  return { document, prefix, defaultVersion };
+}
 
+export function buildSpecIndex({ document, prefix, defaultVersion }: IParsedSpec): TSpecIndex {
   const index = new Map<string, ISpecOperation>();
   for (const [rawPath, pathItem] of Object.entries(document.paths ?? {})) {
     if (!pathItem) continue;
@@ -69,4 +78,8 @@ export async function loadSpecIndex(specFilePath: string): Promise<TSpecIndex> {
   }
 
   return index;
+}
+
+export async function loadSpecIndex(specFilePath: string): Promise<TSpecIndex> {
+  return buildSpecIndex(await loadSpecDocument(specFilePath));
 }
