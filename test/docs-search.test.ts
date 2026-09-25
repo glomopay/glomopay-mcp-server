@@ -1,6 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, rmSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import nock from 'nock';
 
@@ -8,13 +8,14 @@ import { buildCorpus, type ICorpusPage } from '@/core/docs/docs.module';
 import { callTool, isRefused, resultText, startTestServer, withCassette, type ITestServer } from './helpers';
 
 let server: ITestServer;
+let corpusPath: string;
 
 beforeAll(async () => {
   let corpus: ICorpusPage[] = [];
   await withCassette('docs-corpus.json', async () => {
     corpus = await buildCorpus();
   });
-  const corpusPath = path.join(os.tmpdir(), `docs-corpus-${process.pid}.json`);
+  corpusPath = path.join(os.tmpdir(), `docs-corpus-${process.pid}.json`);
   writeFileSync(corpusPath, JSON.stringify(corpus));
   server = await startTestServer({ docsCorpusPath: corpusPath });
   nock.enableNetConnect('127.0.0.1');
@@ -23,6 +24,7 @@ beforeAll(async () => {
 afterAll(async () => {
   nock.disableNetConnect();
   await server.close();
+  rmSync(corpusPath, { force: true });
 });
 
 function search(query: string, limit?: number) {
