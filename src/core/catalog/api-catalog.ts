@@ -138,7 +138,10 @@ export class ApiCatalog {
   private byId: Map<string, ICatalogEntry>;
   private bm25: Bm25Index;
 
-  constructor(private entries: ICatalogEntry[]) {
+  constructor(
+    private entries: ICatalogEntry[],
+    readonly origin: string = '',
+  ) {
     this.byId = new Map(entries.map((entry) => [entry.operationId, entry]));
 
     this.bm25 = new Bm25Index(
@@ -190,6 +193,16 @@ export class ApiCatalog {
   }
 }
 
+function serverOrigin(document: OpenAPIV3.Document): string {
+  const serverUrl = document.servers?.[0]?.url;
+  if (!serverUrl) return '';
+  try {
+    return new URL(serverUrl).origin;
+  } catch {
+    return '';
+  }
+}
+
 export function buildCatalog(parsed: IParsedSpec, allowedOperationIds: Iterable<string>): ApiCatalog {
   const { document, prefix, defaultVersion } = parsed;
   const allowed = new Set(allowedOperationIds);
@@ -220,5 +233,5 @@ export function buildCatalog(parsed: IParsedSpec, allowedOperationIds: Iterable<
     }
   }
 
-  return new ApiCatalog(entries);
+  return new ApiCatalog(entries, serverOrigin(document));
 }

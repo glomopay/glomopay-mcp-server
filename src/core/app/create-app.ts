@@ -7,6 +7,7 @@ import { buildCatalog } from '@/core/catalog/catalog.module';
 import { executionAllowlist } from '@/features/allowlist/allowlist.module';
 import { ApiReadTool, ApiWriteTool } from '@/features/api-execution/api-execution.module';
 import { ApiSearchTool, ApiDetailsTool } from '@/features/api-discovery/api-discovery.module';
+import { SampleRequestTool } from '@/features/sample-request/sample-request.module';
 import { HealthCheckTool } from '@/features/health-check/health-check.module';
 import { DocsIndex } from '@/core/docs/docs.module';
 import { DocsSearchTool } from '@/features/docs-search/docs-search.module';
@@ -40,6 +41,7 @@ export async function createApp({ specPath, apiHost, docsCorpusPath }: ICreateAp
   }
   mcpServer.registerTool(new ApiSearchTool(catalog));
   mcpServer.registerTool(new ApiDetailsTool(catalog));
+  mcpServer.registerTool(new SampleRequestTool(catalog));
   mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
   mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
   mcpServer.registerTool(new HealthCheckTool());
