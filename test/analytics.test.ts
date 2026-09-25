@@ -399,6 +399,46 @@ describe('status and error_code', () => {
     });
   }
 
+  for (const status of [500, 502, 503, 504]) {
+    it(`tells the agent a write's outcome is unknown when the API answers ${status}`, async () => {
+      const response = await callTool(
+        statusServer.url,
+        'glomo_api_write',
+        { operationId: 'cancelPayout', params: { id: `payout_status_${status}`, reason: 'duplicate' } },
+        SANDBOX_KEY,
+      );
+      expect(isRefused(response)).toBe(true);
+      const text = resultText(response);
+      expect(text).toContain(`outcome of "cancelPayout" is unknown: the API answered ${status}`);
+      expect(text).toContain('look the resource up');
+      expect(text).toContain('do not retry with a new request_id');
+    });
+  }
+
+  it('keeps the plain error for a write the API rejects with a 4xx', async () => {
+    const response = await callTool(
+      statusServer.url,
+      'glomo_api_write',
+      { operationId: 'cancelPayout', params: { id: 'payout_status_422', reason: 'duplicate' } },
+      SANDBOX_KEY,
+    );
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('"statusCode":422');
+    expect(resultText(response)).not.toContain('unknown');
+  });
+
+  it('keeps the plain error for a read the API answers with 503', async () => {
+    const response = await callTool(
+      statusServer.url,
+      'glomo_api_read',
+      { operationId: 'getPayoutById', params: { id: 'payout_status_503' } },
+      SANDBOX_KEY,
+    );
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('"statusCode":503');
+    expect(resultText(response)).not.toContain('unknown');
+  });
+
   it('keeps the plain error for a read that times out', async () => {
     const upstream = await startBrokenUpstream('silent');
     const readServer = await startTestServer({ apiHost: upstream.origin, downstreamTimeoutMs: 100 });
@@ -484,8 +524,8 @@ describe('search_query redaction', () => {
     ['an email', 'refund to jane.doe@example.com today', 'refund to [email] today'],
     ['an international phone number', 'call +91 98765 43210 back', 'call [phone] back'],
     ['a bare phone number', 'call 9876543210 back', 'call [phone] back'],
-    ['a PAN', 'kyc for ABCDE1234F failed', 'kyc for [pan] failed'],
-    ['a lower-case PAN', 'kyc for abcde1234f failed', 'kyc for [pan] failed'],
+    ['a PAN', 'kyc for ABCPE1234F failed', 'kyc for [pan] failed'],
+    ['a lower-case PAN', 'kyc for abcpe1234f failed', 'kyc for [pan] failed'],
     ['a spaced Aadhaar', 'aadhaar 1234 5678 9012 check', 'aadhaar [aadhaar] check'],
     ['an unspaced Aadhaar', 'aadhaar 123456789012 check', 'aadhaar [aadhaar] check'],
     ['a spaced card number', 'card 4111 1111 1111 1111 declined', 'card [card] declined'],
@@ -499,8 +539,9 @@ describe('search_query redaction', () => {
     ['a long hex string', 'secret 3f786850e387550fdab836ed7e6dc881de23001b here', 'secret [key] here'],
     ['a long base64 string', 'secret dGhpc2lzYXZlcnlsb25nc2VjcmV0dmFsdWUxMjM0NTY3OA== here', 'secret [key] here'],
     ['surrounding whitespace', '   create payout   ', 'create payout'],
-    ['a PAN inside a GSTIN', 'GSTIN 27ABCDE1234F1Z5', 'GSTIN 27[pan]1Z5'],
-    ['a PAN run into words', 'forABCDE1234Ffailed', 'for[pan]failed'],
+    ['a PAN inside a GSTIN', 'GSTIN 27ABCPE1234F1Z5', 'GSTIN 27[pan]1Z5'],
+    ['a PAN run into words', 'forABCPE1234Ffailed', 'for[pan]failed'],
+    ['a company PAN', 'pan AAACR5055K on file', 'pan [pan] on file'],
     ['an Aadhaar with double spaces', 'aadhaar 1234  5678  9012', 'aadhaar [aadhaar]'],
     ['an Aadhaar with spaced dashes', 'aadhaar 1234 - 5678 - 9012', 'aadhaar [aadhaar]'],
     ['a slashed card number', 'card 4111/1111/1111/1111', 'card [card]'],
@@ -526,7 +567,16 @@ describe('search_query redaction', () => {
     });
   }
 
-  for (const query of ['create a payout in USD', 'list payouts for 2024', 'test_mode webhook', 'P1006 purpose code']) {
+  for (const query of [
+    'create a payout in USD',
+    'list payouts for 2024',
+    'test_mode webhook',
+    'P1006 purpose code',
+    'payin2024q',
+    'getPayouts',
+    'order_2024abcd',
+    'refund for payin2024q on getPayouts',
+  ]) {
     it(`leaves ordinary text alone: "${query}"`, async () => {
       const { submitted } = await search(query);
       expect(submitted.properties.search_query).toBe(query);

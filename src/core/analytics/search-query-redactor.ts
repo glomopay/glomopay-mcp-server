@@ -20,7 +20,8 @@ const RULES: TRule[] = [
   [/\b(?:live|test)[_-][A-Za-z0-9]{12,}/gi, '[key]'],
   [/(?<![A-Za-z0-9])[A-Fa-f0-9]{20,}(?![A-Za-z0-9])/g, '[key]'],
   [/(?<![A-Za-z0-9+/_-])(?=[A-Za-z0-9+/_-]*\d)(?=[A-Za-z0-9+/_-]*[A-Za-z])[A-Za-z0-9+/_-]{20,}={0,2}/g, '[key]'],
-  [/[A-Za-z]{5}\d{4}[A-Za-z]/gi, '[pan]'],
+  // PAN: the 4th character is the holder-type code.
+  [/[A-Z]{3}[ABCFGHLJPT][A-Z][0-9]{4}[A-Z]/gi, '[pan]'],
   [new RegExp(`(?<!\\w)\\d(?:${SEP}\\d){12,18}(?!\\w)`, 'g'), '[card]'],
   [new RegExp(`(?<!\\w)\\d{4}${SEP}\\d{4}${SEP}\\d{4}(?!\\w)`, 'g'), '[aadhaar]'],
   [
