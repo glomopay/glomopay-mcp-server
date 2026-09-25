@@ -76,6 +76,7 @@ class MixpanelAnalytics implements IAnalytics {
   private queue: TMixpanelEvent[] = [];
   private timer: NodeJS.Timeout | undefined;
   private inFlight = new Set<Promise<void>>();
+  private flushing = false;
   private url: string;
 
   constructor(
@@ -99,13 +100,19 @@ class MixpanelAnalytics implements IAnalytics {
     }
   }
 
+  /** Resolves once nothing is queued and nothing is in flight. The caller bounds how long it waits. */
   async flush(): Promise<void> {
+    this.flushing = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    do {
-      this.sendAvailable();
-      await Promise.all([...this.inFlight]);
-    } while (this.queue.length > 0);
+    try {
+      while (this.queue.length > 0 || this.inFlight.size > 0) {
+        this.sendAvailable();
+        await Promise.race([...this.inFlight]);
+      }
+    } finally {
+      this.flushing = false;
+    }
   }
 
   private buildProperties(identity: IApiKeyClaims | undefined, properties: IAnalyticsProperties): Record<string, string | number> {
@@ -127,7 +134,7 @@ class MixpanelAnalytics implements IAnalytics {
   }
 
   private schedule(): void {
-    if (this.timer || this.queue.length === 0) return;
+    if (this.flushing || this.timer || this.queue.length === 0) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       this.sendAvailable();

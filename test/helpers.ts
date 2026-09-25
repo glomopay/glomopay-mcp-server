@@ -266,7 +266,7 @@ export interface IUpstreamRequest {
 export interface IFakeUpstream {
   origin: string;
   /** Connections accepted so far, and the most that were open at once. */
-  stats: { connections: number; open: number; maxOpen: number };
+  stats: { connections: number; open: number; maxOpen: number; answered: number };
   requests: IUpstreamRequest[];
   close: () => Promise<void>;
 }
@@ -284,11 +284,15 @@ function recordRawRequest(requests: IUpstreamRequest[], chunk: string): void {
  * - `silent` accepts connections, records each request line, and never answers;
  * - `reset` drops each connection as soon as it opens;
  * - `status` answers over HTTP with the status named in the path (`..._status_503`),
- *   otherwise 200 (GET) or 201, with an `x-request-id` header and `body` as JSON.
+ *   otherwise 200 (GET) or 201, after `delayMs`, with an `x-request-id` header and `body`
+ *   (a string as-is, anything else as JSON).
  */
-export async function startBrokenUpstream(behaviour: 'silent' | 'reset' | 'status', options: { body?: unknown } = {}): Promise<IFakeUpstream> {
+export async function startBrokenUpstream(
+  behaviour: 'silent' | 'reset' | 'status',
+  options: { body?: unknown; delayMs?: number } = {},
+): Promise<IFakeUpstream> {
   const sockets = new Set<Socket>();
-  const stats = { connections: 0, open: 0, maxOpen: 0 };
+  const stats = { connections: 0, open: 0, maxOpen: 0, answered: 0 };
   const requests: IUpstreamRequest[] = [];
 
   const track = (socket: Socket) => {
@@ -311,8 +315,11 @@ export async function startBrokenUpstream(behaviour: 'silent' | 'reset' | 'statu
             requests.push({ method: req.method ?? '', path: req.url ?? '', body });
             const named = /_status_(\d{3})/.exec(req.url ?? '');
             const status = named ? Number(named[1]) : req.method === 'GET' ? 200 : 201;
-            res.writeHead(status, { 'content-type': 'application/json', 'x-request-id': UPSTREAM_REQUEST_ID });
-            res.end(JSON.stringify(options.body ?? {}));
+            setTimeout(() => {
+              const text = typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {});
+              res.writeHead(status, { 'content-type': 'application/json', 'x-request-id': UPSTREAM_REQUEST_ID });
+              res.end(text, () => (stats.answered += 1));
+            }, options.delayMs ?? 0);
           });
         })
       : createServer((socket) => {

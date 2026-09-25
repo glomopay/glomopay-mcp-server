@@ -91,4 +91,20 @@ describe('analytics delivery against a Mixpanel host that never answers', () => 
     expect(dropped).toBeGreaterThanOrEqual(1500 - 1000 - 4 * 50);
     expect(dropped).toBeLessThanOrEqual(1500 - 1000 - 4);
   });
+
+  it('flush waits for requests started while it runs, not only those in flight when it began', async () => {
+    const slowSink = await startBrokenUpstream('status', { body: '1', delayMs: 150 });
+    sink = slowSink;
+    app = await startTestServer({ env: { MIXPANEL_TOKEN, MIXPANEL_HOST: slowSink.origin } });
+
+    await callTool(app.url, 'glomo_api_search', { query: 'first' }, KEY);
+    await until(() => slowSink.requests.length >= 1);
+
+    const flushed = flushApps();
+    await callTool(app.url, 'glomo_api_search', { query: 'second' }, KEY);
+    await flushed;
+
+    expect(slowSink.requests.length).toBeGreaterThanOrEqual(2);
+    expect(slowSink.stats.answered).toBe(slowSink.requests.length);
+  });
 });

@@ -16,10 +16,11 @@ function digitCount(value: string): number {
 const RULES: TRule[] = [
   [/eyJ[A-Za-z0-9_-]+\s*\.\s*[A-Za-z0-9_-]+(?:\s*\.\s*[A-Za-z0-9_-]+)?/g, '[jwt]'],
   [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]'],
-  [/[\w.-]+@[a-z]{2,}/gi, '[upi]'],
-  [/\b(?:live|test)[_-][A-Za-z0-9]{12,}/gi, '[key]'],
+  [/[\w.-]+@[a-z][a-z0-9]{1,}/gi, '[upi]'],
+  // Publishable keys: live_/test_ + 8 hex (creation time) + 8 alphanumerics.
+  [/(?<![A-Za-z0-9])(?:live|test)[_-][0-9a-f]{8}[0-9a-z]{8}(?![A-Za-z0-9])/gi, '[key]'],
   [/(?<![A-Za-z0-9])[A-Fa-f0-9]{20,}(?![A-Za-z0-9])/g, '[key]'],
-  [/(?<![A-Za-z0-9+/_-])(?=[A-Za-z0-9+/_-]*\d)(?=[A-Za-z0-9+/_-]*[A-Za-z])[A-Za-z0-9+/_-]{20,}={0,2}/g, '[key]'],
+  [/(?<![A-Za-z0-9+/])(?=[A-Za-z0-9+/]*\d)(?=[A-Za-z0-9+/]*[A-Za-z])[A-Za-z0-9+/]{20,}={0,2}/g, '[key]'],
   // PAN: the 4th character is the holder-type code.
   [/[A-Z]{3}[ABCFGHLJPT][A-Z][0-9]{4}[A-Z]/gi, '[pan]'],
   [new RegExp(`(?<!\\w)\\d(?:${SEP}\\d){12,18}(?!\\w)`, 'g'), '[card]'],
@@ -31,9 +32,16 @@ const RULES: TRule[] = [
   [/\d(?:[\s./_-]*\d){8,}/g, '[number]'],
 ];
 
-/** Unicode compatibility forms folded (full-width digits, NBSP) and whitespace runs collapsed. */
+/**
+ * Zero-width characters removed, Unicode dashes mapped to "-", compatibility forms
+ * folded (full-width digits, NBSP) and whitespace runs collapsed.
+ */
 function normalise(text: string): string {
-  return text.normalize('NFKC').replace(/\s+/g, ' ');
+  return text
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ');
 }
 
 /**
