@@ -4,6 +4,8 @@ interface IDocChunk {
   title: string;
   url: string;
   section: string;
+  sectionDescription: string;
+  entryDescription: string;
   heading: string;
   text: string;
 }
@@ -12,6 +14,7 @@ export interface IDocsResult {
   title: string;
   url: string;
   heading: string;
+  anchor: string;
   excerpt: string;
   score: number;
 }
@@ -21,6 +24,7 @@ interface ICorpusPage {
   url: string;
   section: string;
   sectionDescription: string;
+  entryDescription?: string;
   content: string;
 }
 
@@ -57,14 +61,55 @@ function tokenize(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((token) => token.length >= 2 && !STOPWORDS.has(token));
 }
 
+function slugify(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+// Build the excerpt around the first line that matches a query term, so the cited
+// snippet actually contains the match rather than the first N chars of the chunk.
+function buildExcerpt(text: string, terms: Set<string>): string {
+  const lines = text.split('\n');
+  const hit = lines.findIndex((line) => tokenize(line).some((token) => terms.has(token)));
+  if (hit < 0) return text.slice(0, EXCERPT_LIMIT).trim();
+
+  let start = hit;
+  let end = hit;
+  let length = lines[hit].length;
+  while (length < EXCERPT_LIMIT && (start > 0 || end < lines.length - 1)) {
+    if (start > 0) {
+      start -= 1;
+      length += lines[start].length + 1;
+    }
+    if (length < EXCERPT_LIMIT && end < lines.length - 1) {
+      end += 1;
+      length += lines[end].length + 1;
+    }
+  }
+  return lines
+    .slice(start, end + 1)
+    .join('\n')
+    .trim()
+    .slice(0, EXCERPT_LIMIT);
+}
+
 function chunkPage(page: ICorpusPage): IDocChunk[] {
   const chunks: IDocChunk[] = [];
   let heading = page.title;
   let buffer: string[] = [];
+  const base = {
+    title: page.title,
+    url: page.url,
+    section: page.section,
+    sectionDescription: page.sectionDescription,
+    entryDescription: page.entryDescription ?? '',
+  };
 
   const flush = () => {
     const text = buffer.join('\n').trim();
-    if (text) chunks.push({ title: page.title, url: page.url, section: page.section, heading, text });
+    if (text) chunks.push({ ...base, heading, text });
   };
 
   for (const line of page.content.split('\n')) {
@@ -80,7 +125,7 @@ function chunkPage(page: ICorpusPage): IDocChunk[] {
   flush();
 
   if (chunks.length === 0) {
-    chunks.push({ title: page.title, url: page.url, section: page.section, heading: page.title, text: page.content.trim() });
+    chunks.push({ ...base, heading: page.title, text: page.content.trim() });
   }
   return chunks;
 }
@@ -99,7 +144,8 @@ export class DocsIndex {
     const docTokens = chunks.map((chunk) => [
       ...repeat(tokenize(chunk.title), 3),
       ...repeat(tokenize(chunk.heading), 2),
-      ...tokenize(`${chunk.section} ${chunk.text}`),
+      ...repeat(tokenize(chunk.entryDescription), 2),
+      ...tokenize(`${chunk.section} ${chunk.sectionDescription} ${chunk.text}`),
     ]);
     this.docLengths = docTokens.map((tokens) => tokens.length);
     this.avgdl = this.docLengths.reduce((sum, len) => sum + len, 0) / (this.docLengths.length || 1) || 1;
@@ -154,7 +200,8 @@ export class DocsIndex {
         title: entry.chunk.title,
         url: entry.chunk.url,
         heading: entry.chunk.heading,
-        excerpt: entry.chunk.text.slice(0, EXCERPT_LIMIT),
+        anchor: `${entry.chunk.url}#${slugify(entry.chunk.heading)}`,
+        excerpt: buildExcerpt(entry.chunk.text, terms),
         score: Number(entry.score.toFixed(3)),
       }));
   }
