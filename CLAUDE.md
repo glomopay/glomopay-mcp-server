@@ -29,6 +29,13 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
   (`GLOMO_MCP_PUBLIC_KEY`, `GLOMO_MCP_AUDIENCE`); no private key lives on this service. `iss` is not checked;
   `aud` alone identifies the credential. There is no `scope` or `purpose` claim: every credential is
   read_write until access is split (a separate change).
+- Telemetry (`src/core/telemetry`, `src/core/analytics`) watches each transport's JSON-RPC traffic, so tools never
+  emit events. A tool reports what it knows about its own call with `reportToolCall` (`operationId`, `httpStatus`,
+  `resultCount`, `searchQuery`, `errorCode`); nothing else can reach Mixpanel. Every `isError` path reports an
+  `errorCode` from the fixed list in `error-code.ts`. Env vars (`MIXPANEL_TOKEN`, `GLOMO_JWT_PUBLIC_KEY`, `OTEL_*`) are in README.md.
+- `readApiKeyClaims` (`src/features/auth/api-key-claims.ts`) is the one reader of API key claims (`sub`, `env`).
+- Mixpanel properties are snake_case; OTel span, metric and log attributes are camelCase. Log through
+  `@/shared/logger/logger.module`, not `console`.
 
 ## Adding an operation
 
@@ -47,6 +54,8 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 - Every tool change ships with tests in the same PR, driven through `tools/call` on the real HTTP server (`createApp()`).
 - Response content under test comes from recorded sandbox responses (nock.back cassettes). A missing cassette fails CI.
 - Hand-coded nock interceptors only assert the outgoing request, or that a refused call never reached the API (empty bodies).
+- Mixpanel is asserted with nock interceptors on its API host (`captureMixpanel` in `test/helpers.ts`). Never record a
+  cassette against Mixpanel. OTel is asserted with the SDK's in-memory exporters (`test/otel-setup.ts`, imported first).
 - Every guard has a test that goes red when the guard is removed.
 - Use real ID prefixes (`payout_`, `cust_`, ...) and obviously fake test tokens.
 - Scrub cassettes of auth, tokens, names, emails, phones, addresses and account numbers before committing.

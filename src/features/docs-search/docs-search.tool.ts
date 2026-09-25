@@ -2,6 +2,7 @@ import { z, ZodRawShape } from 'zod';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types';
 
 import { BaseTool, IToolConfig } from '@/shared/tool/tool.module';
+import { reportToolCall } from '@/core/telemetry/telemetry.module';
 import { DocsIndex } from '@/core/docs/docs.module';
 
 type TArgs = { query: string; limit?: number };
@@ -27,6 +28,7 @@ export class DocsSearchTool extends BaseTool {
   execute(args: ZodRawShape): CallToolResult {
     const { query, limit } = args as unknown as TArgs;
     const results = this.index.search(query, limit ?? 5);
+    reportToolCall({ searchQuery: query, resultCount: results.length });
     return { content: [{ type: 'text', text: JSON.stringify({ results }) }] };
   }
 }

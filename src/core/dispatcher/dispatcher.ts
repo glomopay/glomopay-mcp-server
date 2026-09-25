@@ -3,11 +3,20 @@ import { CallToolResult } from '@modelcontextprotocol/sdk/types';
 import { TToolExtra } from '@/shared/tool/tool.module';
 import { ApiClient, ApiError, THttpMethod } from '@/shared/api-client/api-client.module';
 import { CredentialVerifier } from '@/features/auth/auth.module';
+import { errorCodeForUpstream, reportToolCall, type TErrorCode } from '@/core/telemetry/telemetry.module';
 
 import { TSpecIndex } from './spec-index';
 
-function errorResult(text: string): CallToolResult {
+function errorResult(text: string, errorCode: TErrorCode): CallToolResult {
+  reportToolCall({ errorCode });
   return { content: [{ type: 'text', text }], isError: true };
+}
+
+const REQUEST_ID_FORMAT = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function downstreamRequestId(headers: Record<string, unknown> | undefined): string | undefined {
+  const value = headers?.['x-request-id'];
+  return typeof value === 'string' && REQUEST_ID_FORMAT.test(value) ? value : undefined;
 }
 
 export class Dispatcher {
@@ -26,26 +35,28 @@ export class Dispatcher {
   ): Promise<CallToolResult> {
     const operation = this.specIndex.get(operationId);
     if (!operation) {
-      return errorResult(`Unknown operationId "${operationId}": not a documented glomo operation.`);
+      return errorResult(`Unknown operationId "${operationId}": not a documented glomo operation.`, 'unknown_operation');
     }
+    reportToolCall({ operationId });
 
     if (!this.allowlist.has(operationId)) {
-      return errorResult(`operationId "${operationId}" is not on the execution allowlist and cannot be called.`);
+      return errorResult(`operationId "${operationId}" is not on the execution allowlist and cannot be called.`, 'unknown_operation');
     }
 
     if (!allowedMethods.includes(operation.method)) {
       return errorResult(
         `operationId "${operationId}" is a ${operation.method} operation; this tool only serves ${allowedMethods.join('/')}. ` +
           `Use ${operation.method === 'GET' ? 'glomo_api_read' : 'glomo_api_write'} instead.`,
+        'validation_error',
       );
     }
 
     const credential = await this.verifier.resolve(extra);
     if (credential.status === 'absent') {
-      return errorResult('Unauthorized: no glomo credential supplied for this request.');
+      return errorResult('Unauthorized: no glomo credential supplied for this request.', 'auth_missing');
     }
     if (credential.status === 'invalid') {
-      return errorResult(`Unauthorized: ${credential.reason}.`);
+      return errorResult(`Unauthorized: ${credential.reason}.`, 'auth_invalid');
     }
 
     const { token: secret, env } = credential.credential;
@@ -61,10 +72,10 @@ export class Dispatcher {
     for (const name of operation.pathParams) {
       const value = remaining[name];
       if (typeof value !== 'string' || value.trim() === '') {
-        return errorResult(`Missing or invalid path parameter "${name}" for "${operationId}": expected a non-empty string.`);
+        return errorResult(`Missing or invalid path parameter "${name}" for "${operationId}": expected a non-empty string.`, 'validation_error');
       }
       if (value === '.' || value === '..' || value.includes('/')) {
-        return errorResult(`Invalid path parameter "${name}" for "${operationId}": must be a single safe path segment.`);
+        return errorResult(`Invalid path parameter "${name}" for "${operationId}": must be a single safe path segment.`, 'validation_error');
       }
     }
 
@@ -76,7 +87,7 @@ export class Dispatcher {
     });
 
     if (/\{[^}]+\}/.test(url)) {
-      return errorResult(`Unresolved path parameters for "${operationId}".`);
+      return errorResult(`Unresolved path parameters for "${operationId}".`, 'validation_error');
     }
 
     const query: Record<string, unknown> = {};
@@ -100,14 +111,19 @@ export class Dispatcher {
     };
 
     try {
-      const response = await this.apiClient.request(method, url, body, undefined, requestConfig);
-      return { content: [{ type: 'text', text: JSON.stringify(response) }] };
+      const response = await this.apiClient.requestWithResponse(method, url, body, undefined, requestConfig);
+      reportToolCall({ httpStatus: response.status, downstreamRequestId: downstreamRequestId(response.headers) });
+      return { content: [{ type: 'text', text: JSON.stringify(response.data) }] };
     } catch (error) {
       if (error instanceof ApiError) {
-        return errorResult(JSON.stringify({ operationId, statusCode: error.statusCode, message: error.message, error: error.data }));
+        reportToolCall({ httpStatus: error.statusCode, downstreamRequestId: downstreamRequestId(error.headers) });
+        return errorResult(
+          JSON.stringify({ operationId, statusCode: error.statusCode, message: error.message, error: error.data }),
+          errorCodeForUpstream(error),
+        );
       }
       const message = error instanceof Error ? error.message : String(error);
-      return errorResult(`glomo API call failed for "${operationId}": ${message}`);
+      return errorResult(`glomo API call failed for "${operationId}": ${message}`, 'internal');
     }
   }
 }

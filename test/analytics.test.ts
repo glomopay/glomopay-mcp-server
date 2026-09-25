@@ -1,0 +1,602 @@
+import path from 'node:path';
+import os from 'node:os';
+import { generateKeyPairSync } from 'node:crypto';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import nock from 'nock';
+
+import { buildCorpus, type ICorpusPage } from '@/core/docs/docs.module';
+import { startTelemetry } from '@/core/telemetry/telemetry.module';
+import {
+  API_BASE,
+  callTool,
+  captureMixpanel,
+  initialize,
+  isRefused,
+  jwt,
+  pause,
+  resultText,
+  SANDBOX_TOKEN,
+  signApiKey,
+  startBrokenUpstream,
+  startTestServer,
+  withCassette,
+  type IMixpanelEvent,
+  type ITestServer,
+} from './helpers';
+
+const MIXPANEL_TOKEN = 'mixpanel-test-project-token';
+const PACKAGE_VERSION = (JSON.parse(readFileSync(path.resolve(__dirname, '../package.json'), 'utf8')) as { version: string }).version;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+const MERCHANT = 'merch_4f9a8b7c6d5e';
+const signingKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const otherKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const FAR_FUTURE = Math.floor(Date.now() / 1000) + 3600;
+
+function apiKey(env: string, overrides: Record<string, unknown> = {}, privateKey = signingKeys.privateKey): string {
+  return signApiKey(
+    { sub: MERCHANT, env, jti: 'jti-must-not-leak', aud: 'aud-must-not-leak', iat: 1700000000, exp: FAR_FUTURE, ...overrides },
+    privateKey,
+  );
+}
+
+const SANDBOX_KEY = apiKey('sandbox');
+const PRODUCTION_KEY = apiKey('production');
+
+const CUSTOMER_BODY = {
+  name: 'Body Name Must Not Leak',
+  customer_type: 'individual',
+  email: 'body-must-not-leak@example.com',
+  address: '1 Body Street',
+  city: 'Bengaluru',
+  state: 'Karnataka',
+  country: 'IND',
+};
+
+let server: ITestServer;
+let verifyingServer: ITestServer;
+let silentServer: ITestServer;
+let corpusPath: string;
+
+beforeAll(async () => {
+  let corpus: ICorpusPage[] = [];
+  await withCassette('docs-corpus.json', async () => {
+    corpus = await buildCorpus();
+  });
+  corpusPath = path.join(os.tmpdir(), `analytics-corpus-${process.pid}.json`);
+  writeFileSync(corpusPath, JSON.stringify(corpus));
+
+  const publicPem = signingKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  server = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN, GLOMO_JWT_PUBLIC_KEY: undefined } });
+  verifyingServer = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN, GLOMO_JWT_PUBLIC_KEY: publicPem } });
+  silentServer = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN: undefined } });
+});
+
+beforeEach(() => {
+  nock.disableNetConnect();
+  nock.enableNetConnect('127.0.0.1');
+});
+
+afterEach(() => {
+  nock.cleanAll();
+});
+
+afterAll(async () => {
+  nock.enableNetConnect();
+  await Promise.all([server.close(), verifyingServer.close(), silentServer.close()]);
+  rmSync(corpusPath, { force: true });
+});
+
+async function eventsFor(
+  run: () => Promise<unknown>,
+  expected: number,
+): Promise<{ submitted: IMixpanelEvent; failed?: IMixpanelEvent; all: IMixpanelEvent[] }> {
+  const mixpanel = captureMixpanel();
+  await run();
+  const all = await mixpanel.waitFor(expected);
+  expect(all).toHaveLength(expected);
+  return {
+    submitted: all.find((event) => event.event === 'mcp_tool_submitted')!,
+    failed: all.find((event) => event.event === 'mcp_tool_failed'),
+    all,
+  };
+}
+
+const onSuccess = (run: () => Promise<unknown>) => eventsFor(run, 1);
+const onFailure = (run: () => Promise<unknown>) => eventsFor(run, 2);
+
+describe('mcp_session_submitted', () => {
+  it('is sent on initialize with the standard properties and the client', async () => {
+    const mixpanel = captureMixpanel();
+    const response = await initialize(server.url, { name: 'claude-code', version: '2.0.14' }, SANDBOX_KEY);
+    expect(response.error).toBeUndefined();
+
+    const [event] = await mixpanel.waitFor(1);
+    expect(event.event).toBe('mcp_session_submitted');
+    expect(event.properties).toMatchObject({
+      distinct_id: MERCHANT,
+      merchant_id: MERCHANT,
+      product: 'mcp_server',
+      platform: 'backend',
+      environment: 'sandbox',
+      mode: 'test',
+      sdk_version: PACKAGE_VERSION,
+      client_name: 'claude_code',
+      client_version: '2.0.14',
+      token: MIXPANEL_TOKEN,
+    });
+    expect(event.properties.mcp_request_id).toMatch(UUID);
+  });
+
+  it('turns off IP geolocation on every request', async () => {
+    const mixpanel = captureMixpanel();
+    await initialize(server.url, { name: 'cursor-vscode', version: '1.7.0' }, SANDBOX_KEY);
+    await mixpanel.waitFor(1);
+    expect(mixpanel.requests[0].query.get('ip')).toBe('0');
+  });
+
+  for (const [raw, expected] of [
+    ['claude-code', 'claude_code'],
+    ['Claude Code', 'claude_code'],
+    ['cursor-vscode', 'cursor'],
+    ['Visual Studio Code', 'vscode'],
+    ['Visual Studio Code - Insiders', 'vscode'],
+    ['windsurf-client', 'windsurf'],
+    ['codex-mcp-client', 'codex'],
+    ['my-own-agent', 'other'],
+  ] as const) {
+    it(`normalises clientInfo.name "${raw}" to ${expected}`, async () => {
+      const mixpanel = captureMixpanel();
+      await initialize(server.url, { name: raw, version: '1.0.0' }, SANDBOX_KEY);
+      const [event] = await mixpanel.waitFor(1);
+      expect(event.properties.client_name).toBe(expected);
+    });
+  }
+
+  it('drops a client version that is not a version string', async () => {
+    const mixpanel = captureMixpanel();
+    await initialize(server.url, { name: 'claude-code', version: 'free text from jane@example.com' }, SANDBOX_KEY);
+    const [event] = await mixpanel.waitFor(1);
+    expect(event.properties.client_name).toBe('claude_code');
+    expect(event.properties).not.toHaveProperty('client_version');
+  });
+});
+
+describe('client on tools/call', () => {
+  it('comes from the User-Agent, since a stateless request has no clientInfo', async () => {
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_api_search', { query: 'payout' }, SANDBOX_KEY, { 'User-Agent': 'claude-code/2.0.14 (external, cli)' }),
+    );
+    expect(submitted.properties).toMatchObject({ client_name: 'claude_code', client_version: '2.0.14' });
+  });
+
+  it('is "other" for an unknown User-Agent, with no version', async () => {
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_api_search', { query: 'payout' }, SANDBOX_KEY, { 'User-Agent': 'some-agent/9.9.9' }),
+    );
+    expect(submitted.properties.client_name).toBe('other');
+    expect(submitted.properties).not.toHaveProperty('client_version');
+  });
+});
+
+describe('mcp_tool_submitted per tool', () => {
+  it('glomo_api_search: search_query and result_count, no operation_id or http_status', async () => {
+    let text = '';
+    const { submitted } = await onSuccess(async () => {
+      text = resultText(await callTool(server.url, 'glomo_api_search', { query: 'create payout' }, SANDBOX_KEY));
+    });
+    const { results } = JSON.parse(text) as { results: unknown[] };
+    expect(submitted.properties).toMatchObject({
+      tool_name: 'glomo_api_search',
+      status: 'success',
+      search_query: 'create payout',
+      result_count: results.length,
+      product: 'mcp_server',
+      platform: 'backend',
+      environment: 'sandbox',
+      mode: 'test',
+      merchant_id: MERCHANT,
+      distinct_id: MERCHANT,
+      sdk_version: PACKAGE_VERSION,
+    });
+    expect(submitted.properties.mcp_request_id).toMatch(UUID);
+    expect(typeof submitted.properties.duration_ms).toBe('number');
+    expect(submitted.properties).not.toHaveProperty('operation_id');
+    expect(submitted.properties).not.toHaveProperty('http_status');
+    expect(submitted.properties).not.toHaveProperty('error_code');
+  });
+
+  it('glomo_docs_search: search_query and result_count', async () => {
+    let text = '';
+    const { submitted } = await onSuccess(async () => {
+      text = resultText(await callTool(server.url, 'glomo_docs_search', { query: 'verify webhook signature' }, SANDBOX_KEY));
+    });
+    const { results } = JSON.parse(text) as { results: unknown[] };
+    expect(submitted.properties).toMatchObject({
+      tool_name: 'glomo_docs_search',
+      search_query: 'verify webhook signature',
+      result_count: results.length,
+    });
+  });
+
+  it('glomo_implementation_planner: the goal as search_query', async () => {
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_implementation_planner', { goal: 'accept card payments from US customers' }, SANDBOX_KEY),
+    );
+    expect(submitted.properties).toMatchObject({
+      tool_name: 'glomo_implementation_planner',
+      search_query: 'accept card payments from US customers',
+    });
+    expect(submitted.properties).not.toHaveProperty('result_count');
+  });
+
+  it('glomo_api_details: tool_name only, no operation_id for a list of ids', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_details', { operationIds: ['getPayoutById'] }, SANDBOX_KEY));
+    expect(submitted.properties.tool_name).toBe('glomo_api_details');
+    expect(submitted.properties).not.toHaveProperty('operation_id');
+    expect(submitted.properties).not.toHaveProperty('search_query');
+  });
+
+  it('glomo_sample_request: operation_id, no http_status', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_sample_request', { operationId: 'getPayoutById' }, SANDBOX_KEY));
+    expect(submitted.properties).toMatchObject({ tool_name: 'glomo_sample_request', operation_id: 'getPayoutById', status: 'success' });
+    expect(submitted.properties).not.toHaveProperty('http_status');
+  });
+
+  it('glomo_api_read: operation_id and http_status', async () => {
+    const scope = nock(API_BASE).get('/api/v1/payouts/payout_1').reply(200, {});
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_1' } }, SANDBOX_KEY),
+    );
+    expect(scope.isDone()).toBe(true);
+    expect(submitted.properties).toMatchObject({ tool_name: 'glomo_api_read', operation_id: 'getPayoutById', http_status: 200, status: 'success' });
+  });
+
+  it('glomo_api_write: operation_id and http_status', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer', CUSTOMER_BODY).reply(201, {});
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY),
+    );
+    expect(scope.isDone()).toBe(true);
+    expect(submitted.properties).toMatchObject({ tool_name: 'glomo_api_write', operation_id: 'createCustomer', http_status: 201, status: 'success' });
+  });
+});
+
+describe('status and error_code', () => {
+  it('sends only mcp_tool_submitted on success', async () => {
+    const { all } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, SANDBOX_KEY));
+    await pause(30);
+    expect(all.map((event) => event.event)).toEqual(['mcp_tool_submitted']);
+  });
+
+  async function expectFailure(run: () => Promise<unknown>, errorCode: string) {
+    const { submitted, failed } = await onFailure(run);
+    expect(submitted.properties.status).toBe('failed');
+    expect(submitted.properties).not.toHaveProperty('error_code');
+    expect(failed).toBeDefined();
+    expect(failed!.properties).toMatchObject({ status: 'failed', error_code: errorCode, tool_name: submitted.properties.tool_name });
+    expect(failed!.properties.mcp_request_id).toBe(submitted.properties.mcp_request_id);
+    return { submitted, failed: failed! };
+  }
+
+  it('validation_error when the arguments fail the input schema', async () => {
+    const { failed } = await expectFailure(() => callTool(server.url, 'glomo_api_search', { query: '' }, SANDBOX_KEY), 'validation_error');
+    expect(failed.properties).not.toHaveProperty('search_query');
+  });
+
+  it('validation_error for an unsafe path parameter, without calling the API', async () => {
+    const scope = nock(API_BASE).get(/.*/).reply(200, {});
+    const { failed } = await expectFailure(
+      () => callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: '..' } }, SANDBOX_KEY),
+      'validation_error',
+    );
+    expect(scope.isDone()).toBe(false);
+    expect(failed.properties.operation_id).toBe('getPayoutById');
+    expect(failed.properties).not.toHaveProperty('http_status');
+  });
+
+  it('unknown_operation for an operationId the spec does not have, and does not send it', async () => {
+    const { failed } = await expectFailure(
+      () => callTool(server.url, 'glomo_sample_request', { operationId: 'jane.doe@example.com' }, SANDBOX_KEY),
+      'unknown_operation',
+    );
+    expect(failed.properties).not.toHaveProperty('operation_id');
+    expect(JSON.stringify(failed)).not.toContain('jane.doe');
+  });
+
+  it('sandbox_only for a write with a production key, without calling the API', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+    await expectFailure(
+      () => callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, PRODUCTION_KEY),
+      'sandbox_only',
+    );
+    expect(scope.isDone()).toBe(false);
+  });
+
+  it('upstream_4xx with the real http_status for a recorded 404', async () => {
+    await withCassette('get-payout-by-id-404.json', async () => {
+      nock.enableNetConnect('127.0.0.1');
+      const { failed } = await expectFailure(
+        () =>
+          callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_000000000000000000000000' } }, SANDBOX_TOKEN),
+        'upstream_4xx',
+      );
+      expect(failed.properties).toMatchObject({ http_status: 404, operation_id: 'getPayoutById' });
+    });
+  });
+
+  for (const [status, errorCode] of [
+    [401, 'auth_rejected'],
+    [403, 'auth_rejected'],
+    [422, 'upstream_4xx'],
+    [500, 'upstream_5xx'],
+    [503, 'upstream_5xx'],
+  ] as const) {
+    it(`${errorCode} when the API answers ${status}`, async () => {
+      const scope = nock(API_BASE).get('/api/v1/payouts/payout_2').reply(status, {});
+      const { failed } = await expectFailure(
+        () => callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_2' } }, SANDBOX_KEY),
+        errorCode,
+      );
+      expect(scope.isDone()).toBe(true);
+      expect(failed.properties.http_status).toBe(status);
+    });
+  }
+
+  it('timeout when the API call does not answer in time', async () => {
+    const upstream = await startBrokenUpstream('silent');
+    const slowServer = await startTestServer({ apiHost: upstream.origin, downstreamTimeoutMs: 100, env: { MIXPANEL_TOKEN } });
+    try {
+      const { failed } = await expectFailure(
+        () => callTool(slowServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_3' } }, SANDBOX_KEY),
+        'timeout',
+      );
+      expect(failed.properties).not.toHaveProperty('http_status');
+    } finally {
+      await slowServer.close();
+      await upstream.close();
+    }
+  });
+
+  it('internal when the connection drops without a response', async () => {
+    const upstream = await startBrokenUpstream('reset');
+    const brokenServer = await startTestServer({ apiHost: upstream.origin, env: { MIXPANEL_TOKEN } });
+    try {
+      const { failed } = await expectFailure(
+        () => callTool(brokenServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_4' } }, SANDBOX_KEY),
+        'internal',
+      );
+      expect(failed.properties).not.toHaveProperty('http_status');
+    } finally {
+      await brokenServer.close();
+      await upstream.close();
+    }
+  });
+
+  it('sends nothing for a tool that is not registered', async () => {
+    const mixpanel = captureMixpanel();
+    const response = await callTool(server.url, 'not_a_tool', {}, SANDBOX_KEY);
+    expect(isRefused(response)).toBe(true);
+    await pause(50);
+    expect(mixpanel.events).toHaveLength(0);
+  });
+});
+
+describe('identity', () => {
+  it('reads merchant_id, environment and mode from a sandbox key', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, SANDBOX_KEY));
+    expect(submitted.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT, environment: 'sandbox', mode: 'test' });
+  });
+
+  it('reads merchant_id, environment and mode from a production key', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, PRODUCTION_KEY));
+    expect(submitted.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT, environment: 'production', mode: 'live' });
+  });
+
+  it('decodes without verifying when no public key is configured', async () => {
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_api_search', { query: 'payout' }, apiKey('sandbox', {}, otherKeys.privateKey)),
+    );
+    expect(submitted.properties.merchant_id).toBe(MERCHANT);
+  });
+
+  it('keeps the identity of a key whose signature verifies', async () => {
+    const { submitted } = await onSuccess(() => callTool(verifyingServer.url, 'glomo_api_search', { query: 'payout' }, PRODUCTION_KEY));
+    expect(submitted.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT, environment: 'production', mode: 'live' });
+  });
+
+  for (const [label, token] of [
+    ['is signed by another key', apiKey('sandbox', {}, otherKeys.privateKey)],
+    ['is unsigned', jwt('sandbox', { sub: MERCHANT })],
+    ['claims a non-RS256 algorithm', signApiKey({ sub: MERCHANT, env: 'sandbox' }, signingKeys.privateKey, { alg: 'HS256' })],
+    ['has expired', apiKey('sandbox', { exp: Math.floor(Date.now() / 1000) - 60 })],
+  ] as const) {
+    it(`treats a key that ${label} as anonymous when verification is on`, async () => {
+      const { submitted } = await onSuccess(() => callTool(verifyingServer.url, 'glomo_api_search', { query: 'payout' }, token));
+      expect(submitted.properties.distinct_id).toBe('');
+      expect(submitted.properties).not.toHaveProperty('merchant_id');
+      expect(submitted.properties).not.toHaveProperty('mode');
+      expect(submitted.properties).not.toHaveProperty('environment');
+    });
+  }
+
+  it('sends an anonymous event for a key that is not a JWT', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, 'not-a-jwt'));
+    expect(submitted.properties.distinct_id).toBe('');
+    expect(submitted.properties).not.toHaveProperty('merchant_id');
+    expect(submitted.properties).not.toHaveProperty('mode');
+    expect(submitted.properties).not.toHaveProperty('environment');
+    expect(submitted.properties).toMatchObject({ product: 'mcp_server', platform: 'backend', tool_name: 'glomo_api_search' });
+  });
+
+  it('sends an anonymous session event for a key that is not a JWT', async () => {
+    const mixpanel = captureMixpanel();
+    await initialize(server.url, { name: 'claude-code', version: '2.0.14' }, 'not-a-jwt');
+    const [event] = await mixpanel.waitFor(1);
+    expect(event.properties.distinct_id).toBe('');
+    expect(event.properties).not.toHaveProperty('merchant_id');
+  });
+});
+
+describe('search_query redaction', () => {
+  const search = (query: string) => onSuccess(() => callTool(server.url, 'glomo_api_search', { query }, SANDBOX_KEY));
+
+  for (const [label, query, expected] of [
+    ['an email', 'refund to jane.doe@example.com today', 'refund to [email] today'],
+    ['an international phone number', 'call +91 98765 43210 back', 'call [phone] back'],
+    ['a bare phone number', 'call 9876543210 back', 'call [phone] back'],
+    ['a PAN', 'kyc for ABCDE1234F failed', 'kyc for [pan] failed'],
+    ['a lower-case PAN', 'kyc for abcde1234f failed', 'kyc for [pan] failed'],
+    ['a spaced Aadhaar', 'aadhaar 1234 5678 9012 check', 'aadhaar [aadhaar] check'],
+    ['an unspaced Aadhaar', 'aadhaar 123456789012 check', 'aadhaar [aadhaar] check'],
+    ['a spaced card number', 'card 4111 1111 1111 1111 declined', 'card [card] declined'],
+    ['a dashed card number', 'card 4111-1111-1111-1111 declined', 'card [card] declined'],
+    ['a bare card number', 'card 4111111111111111 declined', 'card [card] declined'],
+    ['a 13-digit card number', 'card 4222222222222 declined', 'card [card] declined'],
+    ['a long digit run', 'account 123456789 balance', 'account [number] balance'],
+    ['a JWT', 'why is eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJtZXJjaF8xIn0.c2lnbmF0dXJl rejected', 'why is [jwt] rejected'],
+    ['a live_ key', 'key live_4f9a8b7c6d5e4f3a fails', 'key [key] fails'],
+    ['a test_ key', 'key test_4f9a8b7c6d5e4f3a fails', 'key [key] fails'],
+    ['a long hex string', 'secret 3f786850e387550fdab836ed7e6dc881de23001b here', 'secret [key] here'],
+    ['a long base64 string', 'secret dGhpc2lzYXZlcnlsb25nc2VjcmV0dmFsdWUxMjM0NTY3OA== here', 'secret [key] here'],
+    ['surrounding whitespace', '   create payout   ', 'create payout'],
+  ] as const) {
+    it(`masks ${label}`, async () => {
+      const { submitted } = await search(query);
+      expect(submitted.properties.search_query).toBe(expected);
+    });
+  }
+
+  for (const query of ['create a payout in USD', 'list payouts for 2024', 'test_mode webhook', 'P1006 purpose code']) {
+    it(`leaves ordinary text alone: "${query}"`, async () => {
+      const { submitted } = await search(query);
+      expect(submitted.properties.search_query).toBe(query);
+    });
+  }
+
+  it('caps search_query at 200 characters', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_docs_search', { query: 'webhook '.repeat(50) }, SANDBOX_KEY));
+    const sent = submitted.properties.search_query as string;
+    expect(sent.length).toBeLessThanOrEqual(200);
+    expect(sent.length).toBeGreaterThan(190);
+    expect(sent.startsWith('webhook webhook')).toBe(true);
+  });
+
+  it('masks before capping, so a value on the boundary never leaks in part', async () => {
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_docs_search', { query: `${'a'.repeat(190)} 4111 1111 1111 1111` }, SANDBOX_KEY),
+    );
+    expect(submitted.properties.search_query).not.toMatch(/\d/);
+  });
+
+  it('redacts the planner goal too', async () => {
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_implementation_planner', { goal: 'pay out to jane.doe@example.com via 4111 1111 1111 1111' }, SANDBOX_KEY),
+    );
+    expect(submitted.properties.search_query).toBe('pay out to [email] via [card]');
+  });
+});
+
+describe('what is never sent', () => {
+  const ALLOWED_PROPERTIES = new Set([
+    // Added by the Mixpanel library / ingestion.
+    'token',
+    'time',
+    'distinct_id',
+    // Standard properties.
+    'product',
+    'platform',
+    'environment',
+    'mode',
+    'merchant_id',
+    'sdk_version',
+    // Per-event properties.
+    'tool_name',
+    'operation_id',
+    'status',
+    'error_code',
+    'http_status',
+    'duration_ms',
+    'result_count',
+    'search_query',
+    'client_name',
+    'client_version',
+    'mcp_request_id',
+  ]);
+
+  it('carries no arguments, bodies, tokens or extra claims', async () => {
+    const scope = nock(API_BASE)
+      .post('/api/v1/customer', CUSTOMER_BODY)
+      .reply(201, { id: 'cust_response_must_not_leak', email: 'response-must-not-leak@example.com' });
+    const mixpanel = captureMixpanel();
+
+    await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY);
+    scope.done();
+    const failingScope = nock(API_BASE).get('/api/v1/payouts/payout_5').reply(422, { error: 'response-error-must-not-leak' });
+    await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_5' } }, SANDBOX_KEY);
+    failingScope.done();
+    await mixpanel.waitFor(3);
+
+    const wire = JSON.stringify(mixpanel.events) + mixpanel.requests.map((request) => request.query.toString()).join('&');
+    for (const secret of [
+      SANDBOX_KEY,
+      SANDBOX_KEY.split('.')[1],
+      'jti-must-not-leak',
+      'aud-must-not-leak',
+      'Body Name Must Not Leak',
+      'body-must-not-leak',
+      '1 Body Street',
+      'must-not-leak',
+      'payout_5',
+    ]) {
+      expect(wire).not.toContain(secret);
+    }
+    for (const event of mixpanel.events) {
+      for (const key of Object.keys(event.properties)) expect(ALLOWED_PROPERTIES).toContain(key);
+    }
+  });
+});
+
+describe('without MIXPANEL_TOKEN', () => {
+  it('sends nothing', async () => {
+    const mixpanel = captureMixpanel();
+    await initialize(silentServer.url, { name: 'claude-code', version: '2.0.14' }, SANDBOX_KEY);
+    const response = await callTool(silentServer.url, 'glomo_api_search', { query: 'payout' }, SANDBOX_KEY);
+    expect(isRefused(response)).toBe(false);
+    await pause(50);
+    expect(mixpanel.scope.isDone()).toBe(false);
+    expect(mixpanel.events).toHaveLength(0);
+  });
+
+  it('leaves OpenTelemetry off when no OTLP endpoint is configured', () => {
+    expect(process.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
+    expect(startTelemetry()).toBe(false);
+  });
+});
+
+describe('a Mixpanel failure never fails the tool call', () => {
+  for (const [label, reply] of [
+    ['an error status', { status: 500, body: '0' }],
+    ['a network error', { networkError: 'connect ECONNREFUSED' }],
+  ] as const) {
+    it(`returns the tool result when Mixpanel answers with ${label}`, async () => {
+      const mixpanel = captureMixpanel(reply);
+      const response = await callTool(server.url, 'glomo_api_search', { query: 'create payout' }, SANDBOX_KEY);
+      expect(isRefused(response)).toBe(false);
+      expect(JSON.parse(resultText(response))).toHaveProperty('results');
+      await mixpanel.waitFor(1);
+      expect(mixpanel.events).toHaveLength(1);
+    });
+  }
+
+  it('does not wait for a slow Mixpanel', async () => {
+    const mixpanel = captureMixpanel({ delayMs: 2000 });
+    const started = Date.now();
+    const response = await callTool(server.url, 'glomo_api_search', { query: 'create payout' }, SANDBOX_KEY);
+    expect(isRefused(response)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+    nock.abortPendingRequests();
+    expect(mixpanel.events.length).toBeLessThanOrEqual(1);
+  });
+});

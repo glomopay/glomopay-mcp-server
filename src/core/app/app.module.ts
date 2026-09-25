@@ -1,1 +1,1 @@
-export { createApp, type ICreateAppOptions } from './create-app';
+export { createApp, flushApps, type ICreateAppOptions } from './create-app';
