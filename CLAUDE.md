@@ -62,5 +62,5 @@ Do not weaken these without an explicit security review.
 
 ## Naming and PRs
 
-- Tool names use the `glomo_*` prefix (`glomo_api_read`, `glomo_api_write`, `glomo_api_search`, `glomo_api_details`, `glomo_docs_search`, `glomo_implementation_planner`). Wire identifiers stay as they are (`api.glomopay.com`, `X-Glomopay-Signature`).
+- Tool names use the `glomo_*` prefix (`glomo_api_read`, `glomo_api_write`, `glomo_api_search`, `glomo_api_details`, `glomo_docs_search`, `glomo_sample_request`, `glomo_implementation_planner`). Wire identifiers stay as they are (`api.glomopay.com`, `X-Glomopay-Signature`).
 - PR titles carry the Jira key: `KAN-1234 | Short summary`.

@@ -10,6 +10,12 @@ const KEEP_OPERATION_IDS = [
   'getBeneficiaryByIdV2',
   'cancelPayout',
   'getCustomers',
+  'createOrder',
+  'createRefund',
+  'createPayin',
+  'createDocument',
+  'createSubscription',
+  'createPrice',
 ];
 const OFF_SURFACE_CANDIDATES = ['rotateApiKey', 'onboardMerchant', 'updateMerchant', 'createDocument'];
 

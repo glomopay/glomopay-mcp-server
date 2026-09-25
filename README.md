@@ -12,13 +12,14 @@ tool surface cannot drift from the documented API.
 
 ## Tool surface
 
-Discovery and planning are exposed through three credential-free tools:
+Discovery is exposed through four credential-free tools:
 
-| Tool                           | Description                                                                        |
-| ------------------------------ | ---------------------------------------------------------------------------------- |
-| `glomo_api_search`             | Find the right operation by keyword; returns ranked `operationId`/method/path.     |
-| `glomo_api_details`            | Return full parameter and request/response schema detail for given `operationId`s. |
-| `glomo_implementation_planner` | Sequence an ordered call plan for a stated goal, with cited documentation links.   |
+| Tool                           | Description                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `glomo_api_search`             | Find the right operation by keyword; returns ranked `operationId`/method/path.                                      |
+| `glomo_api_details`            | Return full parameter and request/response schema detail for given `operationId`s.                                  |
+| `glomo_sample_request`         | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema.                               |
+| `glomo_implementation_planner` | Placeholder: returns guidance to `glomo_docs_search` and the published skills until authored flows land (KAN-8608). |
 
 Execution is exposed through two generic tools plus a health check:
 
@@ -29,14 +30,16 @@ Execution is exposed through two generic tools plus a health check:
 | `healthCheck`     | —                 | Smoke-test tool; returns a greeting.        |
 
 The discovery tools let an agent locate the right `operationId`, inspect its
-schema, and sequence a whole integration before calling anything. They index the
-whole published OpenAPI spec and mark each operation with an `executable` flag:
+schema, and get a ready-to-run sample before calling it. They index the whole
+published OpenAPI spec and mark each operation with an `executable` flag:
 allowlisted operations carry the tool that runs them
 (`glomo_api_read`/`glomo_api_write`), and the rest are returned as documentation
 only (`executable: false`) so an agent can still read their schema without being
-able to run them. `glomo_implementation_planner` orders the operations for a goal
-by their data dependencies and attaches cited documentation links. They need no
-credential (the caller's bearer is still required at the transport, see below).
+able to run them. `glomo_sample_request` renders the credential as a
+`$GLOMO_API_KEY` placeholder. `glomo_implementation_planner` is a registered
+placeholder that points callers to `glomo_docs_search` and the published skills
+until authored per-flow call sequences land (KAN-8608). They need no credential
+(the caller's bearer is still required at the transport, see below).
 
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
 `createCustomer`) and a flat `params` object. The dispatcher resolves the
