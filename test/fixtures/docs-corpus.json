@@ -1,0 +1,16 @@
+[
+  {
+    "title": "Purpose Codes",
+    "url": "https://docs.glomo.one/payin/purpose-codes.md",
+    "section": "Payin",
+    "sectionDescription": "Collecting money and the objects it touches.",
+    "content": "# Purpose Codes\n\nPurpose codes come from a fixed, regulator-defined set. Use the published payin and payout lists; do not invent a value."
+  },
+  {
+    "title": "Webhooks",
+    "url": "https://docs.glomo.one/platform/webhooks.md",
+    "section": "Platform",
+    "sectionDescription": "Events and delivery.",
+    "content": "# Webhooks\n\nVerify the X-Glomopay-Signature header using HMAC SHA-256 before processing any webhook payload."
+  }
+]
