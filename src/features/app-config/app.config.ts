@@ -11,6 +11,9 @@ export const config = {
     get mixpanelToken(): string | undefined {
       return process.env.MIXPANEL_TOKEN || undefined;
     },
+    get mixpanelHost(): string | undefined {
+      return process.env.MIXPANEL_HOST || undefined;
+    },
   },
   auth: {
     mcpPublicKey: process.env.GLOMO_MCP_PUBLIC_KEY,

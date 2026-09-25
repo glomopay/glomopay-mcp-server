@@ -14,12 +14,18 @@ export interface IToolCallDetails {
   searchQuery?: string;
   errorCode?: TErrorCode;
   downstreamRequestId?: string;
+  /** The operation's path template (e.g. `/api/v1/payouts/{id}`), never the concrete path. */
+  pathTemplate?: string;
 }
 
 const storage = new AsyncLocalStorage<IToolCallDetails>();
 
 export function runWithToolCall<T>(details: IToolCallDetails, run: () => T): T {
   return storage.run(details, run);
+}
+
+export function currentToolCall(): Readonly<IToolCallDetails> | undefined {
+  return storage.getStore();
 }
 
 /** Adds to the current tool call's details. Outside a tools/call it does nothing. */

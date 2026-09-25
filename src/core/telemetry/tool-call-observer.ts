@@ -24,6 +24,7 @@ import {
   type IClientInfo,
 } from '@/core/analytics/analytics.module';
 import { logger } from '@/shared/logger/logger.module';
+import type { TToolName } from '@/shared/tool/tool.module';
 
 import { runWithToolCall, type IToolCallDetails } from './call-context';
 import type { TErrorCode } from './error-code';
@@ -32,7 +33,7 @@ import { SERVICE_NAME } from './otel';
 const WRITE_TOOL = 'glomo_api_write';
 
 interface IPendingCall {
-  toolName: string;
+  toolName: TToolName;
   mcpRequestId: string;
   startedAt: number;
   span: Span;
@@ -85,7 +86,7 @@ export class ToolCallObserver {
 
   constructor(private options: IToolCallObserverOptions) {}
 
-  attach(transport: Transport, toolNames: ReadonlySet<string>): void {
+  attach(transport: Transport, toolNames: ReadonlySet<TToolName>): void {
     const deliver = transport.onmessage;
     if (!deliver) return;
     const send = transport.send.bind(transport);
@@ -109,13 +110,14 @@ export class ToolCallObserver {
     };
   }
 
-  private observeRequest(message: JSONRPCMessage, extra: MessageExtraInfo | undefined, toolNames: ReadonlySet<string>): IPendingCall | undefined {
+  private observeRequest(message: JSONRPCMessage, extra: MessageExtraInfo | undefined, toolNames: ReadonlySet<TToolName>): IPendingCall | undefined {
     if (!isJSONRPCRequest(message)) return undefined;
     if (message.method === 'initialize') this.onInitialize(message, extra);
     if (message.method !== 'tools/call') return undefined;
 
-    const toolName = message.params?.name;
-    if (typeof toolName !== 'string' || !toolNames.has(toolName)) return undefined;
+    const requested = message.params?.name;
+    const toolName = [...toolNames].find((name) => name === requested);
+    if (!toolName) return undefined;
 
     const mcpRequestId = randomUUID();
     return {

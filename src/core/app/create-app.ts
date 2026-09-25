@@ -30,6 +30,8 @@ export interface ICreateAppOptions {
   authAudience?: string;
   /** How long analytics events wait to be batched. */
   analyticsFlushIntervalMs?: number;
+  /** Upper bound on one analytics request. */
+  analyticsTimeoutMs?: number;
   /** Upper bound on a downstream glomo API call. */
   downstreamTimeoutMs?: number;
 }
@@ -53,12 +55,17 @@ function readPublicKey(): KeyObject | undefined | null {
   }
 }
 
-function createObserver(analyticsFlushIntervalMs: number | undefined): { observer: ToolCallObserver; analytics: IAnalytics } {
+function createObserver(
+  analyticsFlushIntervalMs: number | undefined,
+  analyticsTimeoutMs: number | undefined,
+): { observer: ToolCallObserver; analytics: IAnalytics } {
   const metrics = createToolMetrics();
   const analytics = createAnalytics({
     token: config.analytics.mixpanelToken,
+    host: config.analytics.mixpanelHost,
     sdkVersion: packageVersion,
     flushIntervalMs: analyticsFlushIntervalMs,
+    requestTimeoutMs: analyticsTimeoutMs,
     onDropped: (count) => metrics.analyticsDropped.add(count),
   });
   return { observer: new ToolCallObserver({ analytics, metrics, jwtPublicKey: readPublicKey() }), analytics };
@@ -71,6 +78,7 @@ export async function createApp({
   authPublicKey,
   authAudience,
   analyticsFlushIntervalMs,
+  analyticsTimeoutMs,
   downstreamTimeoutMs = DEFAULT_DOWNSTREAM_TIMEOUT_MS,
 }: ICreateAppOptions): Promise<Express> {
   const apiClient = new ApiClient({ baseURL: apiHost, timeout: downstreamTimeoutMs });
@@ -89,7 +97,7 @@ export async function createApp({
   const dispatcher = new Dispatcher(specIndex, executionAllowlist, apiClient, verifier);
   const catalog = buildCatalog(parsedSpec, allowedOperationIds);
 
-  const { observer, analytics } = createObserver(analyticsFlushIntervalMs);
+  const { observer, analytics } = createObserver(analyticsFlushIntervalMs, analyticsTimeoutMs);
   shutdownHooks.push(() => analytics.flush());
 
   const mcpServer = new MCPServer(observer);

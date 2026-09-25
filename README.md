@@ -98,24 +98,28 @@ resolved per operation from the spec.
 
 All telemetry is off unless configured, so local runs, CI and tests send nothing.
 
-| Variable                      | Default | Description                                                                                                                        |
-| ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `MIXPANEL_TOKEN`              | —       | Mixpanel project token. Unset: product analytics is a no-op.                                                                       |
-| `GLOMO_JWT_PUBLIC_KEY`        | —       | PEM public key for glomo API keys. Set: a key is attributed only if its RS256 signature verifies. Unset: claims are decoded as-is. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | —       | OTLP/HTTP collector base URL. Unset: OpenTelemetry is not started.                                                                 |
-| `OTEL_EXPORTER_OTLP_HEADERS`  | —       | Headers sent with every OTLP export, e.g. `authorization=Bearer <token>`.                                                          |
+| Variable                      | Default            | Description                                                                                                                        |
+| ----------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `MIXPANEL_TOKEN`              | —                  | Mixpanel project token. Unset: product analytics is a no-op.                                                                       |
+| `MIXPANEL_HOST`               | `api.mixpanel.com` | Mixpanel ingestion host (or full origin), e.g. for a regional data-residency endpoint.                                             |
+| `GLOMO_JWT_PUBLIC_KEY`        | —                  | PEM public key for glomo API keys. Set: a key is attributed only if its RS256 signature verifies. Unset: claims are decoded as-is. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | —                  | OTLP/HTTP collector base URL. Unset: OpenTelemetry is not started.                                                                 |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | —                  | Headers sent with every OTLP export, e.g. `authorization=Bearer <token>`.                                                          |
 
 - **Product analytics (Mixpanel).** `mcp_session_submitted` on `initialize`, `mcp_tool_submitted` on every
   `tools/call` (`status` = `success`/`failed`), and `mcp_tool_failed` with an `error_code` when a call fails.
-  Events are batched and fire-and-forget; a Mixpanel failure never affects a tool response, and IP
-  geolocation is off. `distinct_id` is the API key's `sub`; calls with no readable key are sent with an
-  empty `distinct_id`. The only tool inputs sent are `operation_id` and redacted search text
-  (`search_query`); arguments, bodies and tokens are never sent.
+  Events are batched and fire-and-forget over the `/track` endpoint, with at most 4 requests in flight, a
+  10 s timeout per request and a bounded queue; anything undeliverable is counted in `mcp.analytics.dropped`.
+  A Mixpanel failure never affects a tool response, and IP geolocation is off. `distinct_id` is the API key's
+  `sub`; calls with no readable key are sent with an empty `distinct_id`. The only tool inputs sent are
+  `operation_id` and redacted search text (`search_query`, from `glomo_api_search`, `glomo_docs_search` and the
+  `glomo_implementation_planner` goal); arguments, bodies and tokens are never sent.
 - **Traces, metrics and logs (OpenTelemetry, `service.name` = `glomo-mcp-server`).** One span per
-  `tools/call` with a child span for the downstream API call; `mcp.tool.calls`, `mcp.tool.duration` and
-  `mcp.analytics.dropped` metrics; JSON logs on stdout carrying the trace context, also exported over OTLP.
-  Each `glomo_api_write` call writes one audit log line (merchant, operation, HTTP status and the
-  downstream request ID; never bodies). The span's `mcpRequestId` equals the Mixpanel `mcp_request_id`.
+  `tools/call` with a child span for the downstream API call, whose URL is recorded as the operation's path
+  template (never the concrete path or query). Incoming HTTP requests are not traced. `mcp.tool.calls`,
+  `mcp.tool.duration` and `mcp.analytics.dropped` metrics; JSON logs on stdout carrying the trace context, also
+  exported over OTLP. Each `glomo_api_write` call writes one audit log line (merchant, operation, HTTP status and
+  the downstream request ID; never bodies). The span's `mcpRequestId` equals the Mixpanel `mcp_request_id`.
 
 ## Development
 

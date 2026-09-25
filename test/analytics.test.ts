@@ -19,6 +19,7 @@ import {
   SANDBOX_TOKEN,
   signApiKey,
   startBrokenUpstream,
+  type IFakeUpstream,
   startTestServer,
   withCassette,
   type IMixpanelEvent,
@@ -57,7 +58,11 @@ const CUSTOMER_BODY = {
 let server: ITestServer;
 let verifyingServer: ITestServer;
 let silentServer: ITestServer;
+let statusServer: ITestServer;
+let statusUpstream: IFakeUpstream;
 let corpusPath: string;
+
+const RESPONSE_SENTINEL = { id: 'cust_response_must_not_leak', email: 'response-must-not-leak@example.com', error: 'response-error-must-not-leak' };
 
 beforeAll(async () => {
   let corpus: ICorpusPage[] = [];
@@ -71,6 +76,8 @@ beforeAll(async () => {
   server = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN, GLOMO_JWT_PUBLIC_KEY: undefined } });
   verifyingServer = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN, GLOMO_JWT_PUBLIC_KEY: publicPem } });
   silentServer = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN: undefined } });
+  statusUpstream = await startBrokenUpstream('status', { body: RESPONSE_SENTINEL });
+  statusServer = await startTestServer({ apiHost: statusUpstream.origin, env: { MIXPANEL_TOKEN } });
 });
 
 beforeEach(() => {
@@ -84,7 +91,8 @@ afterEach(() => {
 
 afterAll(async () => {
   nock.enableNetConnect();
-  await Promise.all([server.close(), verifyingServer.close(), silentServer.close()]);
+  await Promise.all([server.close(), verifyingServer.close(), silentServer.close(), statusServer.close()]);
+  await statusUpstream.close();
   rmSync(corpusPath, { force: true });
 });
 
@@ -245,20 +253,19 @@ describe('mcp_tool_submitted per tool', () => {
   });
 
   it('glomo_api_read: operation_id and http_status', async () => {
-    const scope = nock(API_BASE).get('/api/v1/payouts/payout_1').reply(200, {});
     const { submitted } = await onSuccess(() =>
-      callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_1' } }, SANDBOX_KEY),
+      callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_1' } }, SANDBOX_KEY),
     );
-    expect(scope.isDone()).toBe(true);
+    expect(statusUpstream.requests.at(-1)).toMatchObject({ method: 'GET', path: '/api/v1/payouts/payout_1' });
     expect(submitted.properties).toMatchObject({ tool_name: 'glomo_api_read', operation_id: 'getPayoutById', http_status: 200, status: 'success' });
   });
 
   it('glomo_api_write: operation_id and http_status', async () => {
-    const scope = nock(API_BASE).post('/api/v1/customer', CUSTOMER_BODY).reply(201, {});
     const { submitted } = await onSuccess(() =>
-      callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY),
+      callTool(statusServer.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY),
     );
-    expect(scope.isDone()).toBe(true);
+    expect(statusUpstream.requests.at(-1)).toMatchObject({ method: 'POST', path: '/api/v1/customer' });
+    expect(JSON.parse(statusUpstream.requests.at(-1)!.body)).toEqual(CUSTOMER_BODY);
     expect(submitted.properties).toMatchObject({ tool_name: 'glomo_api_write', operation_id: 'createCustomer', http_status: 201, status: 'success' });
   });
 });
@@ -334,12 +341,12 @@ describe('status and error_code', () => {
     [503, 'upstream_5xx'],
   ] as const) {
     it(`${errorCode} when the API answers ${status}`, async () => {
-      const scope = nock(API_BASE).get('/api/v1/payouts/payout_2').reply(status, {});
+      const id = `payout_status_${status}`;
       const { failed } = await expectFailure(
-        () => callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_2' } }, SANDBOX_KEY),
+        () => callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id } }, SANDBOX_KEY),
         errorCode,
       );
-      expect(scope.isDone()).toBe(true);
+      expect(statusUpstream.requests.some((request) => request.path === `/api/v1/payouts/${id}`)).toBe(true);
       expect(failed.properties.http_status).toBe(status);
     });
   }
@@ -370,6 +377,37 @@ describe('status and error_code', () => {
       expect(failed.properties).not.toHaveProperty('http_status');
     } finally {
       await brokenServer.close();
+      await upstream.close();
+    }
+  });
+
+  for (const behaviour of ['silent', 'reset'] as const) {
+    it(`tells the agent a write's outcome is unknown when the upstream ${behaviour === 'silent' ? 'times out' : 'drops the connection'}`, async () => {
+      const upstream = await startBrokenUpstream(behaviour);
+      const writeServer = await startTestServer({ apiHost: upstream.origin, downstreamTimeoutMs: 100 });
+      try {
+        const response = await callTool(writeServer.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY);
+        expect(isRefused(response)).toBe(true);
+        const text = resultText(response);
+        expect(text).toContain('outcome of "createCustomer" is unknown');
+        expect(text).toContain('look the resource up');
+        expect(text).toContain('do not retry with a new request_id');
+      } finally {
+        await writeServer.close();
+        await upstream.close();
+      }
+    });
+  }
+
+  it('keeps the plain error for a read that times out', async () => {
+    const upstream = await startBrokenUpstream('silent');
+    const readServer = await startTestServer({ apiHost: upstream.origin, downstreamTimeoutMs: 100 });
+    try {
+      const response = await callTool(readServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_6' } }, SANDBOX_KEY);
+      expect(isRefused(response)).toBe(true);
+      expect(resultText(response)).not.toContain('unknown');
+    } finally {
+      await readServer.close();
       await upstream.close();
     }
   });
@@ -461,6 +499,26 @@ describe('search_query redaction', () => {
     ['a long hex string', 'secret 3f786850e387550fdab836ed7e6dc881de23001b here', 'secret [key] here'],
     ['a long base64 string', 'secret dGhpc2lzYXZlcnlsb25nc2VjcmV0dmFsdWUxMjM0NTY3OA== here', 'secret [key] here'],
     ['surrounding whitespace', '   create payout   ', 'create payout'],
+    ['a PAN inside a GSTIN', 'GSTIN 27ABCDE1234F1Z5', 'GSTIN 27[pan]1Z5'],
+    ['a PAN run into words', 'forABCDE1234Ffailed', 'for[pan]failed'],
+    ['an Aadhaar with double spaces', 'aadhaar 1234  5678  9012', 'aadhaar [aadhaar]'],
+    ['an Aadhaar with spaced dashes', 'aadhaar 1234 - 5678 - 9012', 'aadhaar [aadhaar]'],
+    ['a slashed card number', 'card 4111/1111/1111/1111', 'card [card]'],
+    ['an underscored card number', 'card 4111_1111_1111_1111', 'card [card]'],
+    ['a double-spaced card number', 'card 4111  1111  1111  1111', 'card [card]'],
+    ['a dotted card number', 'card 4111.1111.1111.1111 declined', 'card [card] declined'],
+    ['a phone number with a no-break space', 'call 98765\u00a043210 back', 'call [phone] back'],
+    ['full-width digits', 'account １２３４５６７８９ balance', 'account [number] balance'],
+    ['a UPI ID', 'pay jane@okhdfc now', 'pay [upi] now'],
+    ['a JWT with spaces around the dots', 'jwt eyJhbGciOiJSUzI1NiJ9 . eyJzdWIiOiJtZXJjaF8xIn0 . c2lnbmF0dXJl', 'jwt [jwt]'],
+    ['a live_ key with no digits', 'key live_abcdefghijklmnop', 'key [key]'],
+    ['an upper-case LIVE_ key', 'key LIVE_ABCDEFGHIJKLMNOP', 'key [key]'],
+    ['a live- key', 'key live-abcdefghijklmnop', 'key [key]'],
+    ['a 24-character base64 secret', 'secret c2VjcmV0S2V5MTIzNDU2Nzg5 here', 'secret [key] here'],
+    ['a digit run split by mixed separators', 'ref 12 34/56.78_9 end', 'ref [number] end'],
+    ['an all-letter hex secret', 'token deadbeefcafebabedeadbeefcafebabe here', 'token [key] here'],
+    ['a card number split by tabs and newlines', 'card 4111\t1111\n1111\t1111 declined', 'card [card] declined'],
+    ['line breaks inside the text', 'create\n\n  payout', 'create payout'],
   ] as const) {
     it(`masks ${label}`, async () => {
       const { submitted } = await search(query);
@@ -488,6 +546,15 @@ describe('search_query redaction', () => {
       callTool(server.url, 'glomo_docs_search', { query: `${'a'.repeat(190)} 4111 1111 1111 1111` }, SANDBOX_KEY),
     );
     expect(submitted.properties.search_query).not.toMatch(/\d/);
+  });
+
+  it('caps the planner goal at 200 characters too, after masking', async () => {
+    const { submitted } = await onSuccess(() =>
+      callTool(server.url, 'glomo_implementation_planner', { goal: `${'plan '.repeat(60)} jane@okhdfc` }, SANDBOX_KEY),
+    );
+    expect(submitted.properties.tool_name).toBe('glomo_implementation_planner');
+    expect((submitted.properties.search_query as string).length).toBeLessThanOrEqual(200);
+    expect(submitted.properties.search_query).not.toContain('okhdfc');
   });
 
   it('redacts the planner goal too', async () => {
@@ -526,16 +593,10 @@ describe('what is never sent', () => {
   ]);
 
   it('carries no arguments, bodies, tokens or extra claims', async () => {
-    const scope = nock(API_BASE)
-      .post('/api/v1/customer', CUSTOMER_BODY)
-      .reply(201, { id: 'cust_response_must_not_leak', email: 'response-must-not-leak@example.com' });
     const mixpanel = captureMixpanel();
-
-    await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY);
-    scope.done();
-    const failingScope = nock(API_BASE).get('/api/v1/payouts/payout_5').reply(422, { error: 'response-error-must-not-leak' });
-    await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_5' } }, SANDBOX_KEY);
-    failingScope.done();
+    await callTool(statusServer.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY);
+    await callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_5_status_422' } }, SANDBOX_KEY);
+    expect(statusUpstream.requests.some((request) => request.body.includes('Body Name Must Not Leak'))).toBe(true);
     await mixpanel.waitFor(3);
 
     const wire = JSON.stringify(mixpanel.events) + mixpanel.requests.map((request) => request.query.toString()).join('&');
@@ -576,27 +637,31 @@ describe('without MIXPANEL_TOKEN', () => {
 });
 
 describe('a Mixpanel failure never fails the tool call', () => {
-  for (const [label, reply] of [
-    ['an error status', { status: 500, body: '0' }],
-    ['a network error', { networkError: 'connect ECONNREFUSED' }],
-  ] as const) {
-    it(`returns the tool result when Mixpanel answers with ${label}`, async () => {
-      const mixpanel = captureMixpanel(reply);
-      const response = await callTool(server.url, 'glomo_api_search', { query: 'create payout' }, SANDBOX_KEY);
-      expect(isRefused(response)).toBe(false);
-      expect(JSON.parse(resultText(response))).toHaveProperty('results');
-      await mixpanel.waitFor(1);
-      expect(mixpanel.events).toHaveLength(1);
-    });
-  }
-
-  it('does not wait for a slow Mixpanel', async () => {
-    const mixpanel = captureMixpanel({ delayMs: 2000 });
-    const started = Date.now();
+  it('returns the tool result when Mixpanel answers with an error status', async () => {
+    const mixpanel = captureMixpanel({ status: 500, body: '0' });
     const response = await callTool(server.url, 'glomo_api_search', { query: 'create payout' }, SANDBOX_KEY);
     expect(isRefused(response)).toBe(false);
-    expect(Date.now() - started).toBeLessThan(1000);
-    nock.abortPendingRequests();
-    expect(mixpanel.events.length).toBeLessThanOrEqual(1);
+    expect(JSON.parse(resultText(response))).toHaveProperty('results');
+    await mixpanel.waitFor(1);
+    expect(mixpanel.events).toHaveLength(1);
   });
+
+  for (const behaviour of ['reset', 'silent'] as const) {
+    it(`returns the tool result promptly when the Mixpanel host ${behaviour === 'reset' ? 'drops connections' : 'never answers'}`, async () => {
+      const sink = await startBrokenUpstream(behaviour);
+      const app = await startTestServer({ env: { MIXPANEL_TOKEN, MIXPANEL_HOST: sink.origin }, analyticsTimeoutMs: 200 });
+      try {
+        const started = Date.now();
+        const response = await callTool(app.url, 'glomo_api_search', { query: 'create payout' }, SANDBOX_KEY);
+        expect(isRefused(response)).toBe(false);
+        expect(Date.now() - started).toBeLessThan(500);
+        const deadline = Date.now() + 2000;
+        while (sink.stats.connections === 0 && Date.now() < deadline) await pause(5);
+        expect(sink.stats.connections).toBeGreaterThan(0);
+      } finally {
+        await app.close();
+        await sink.close();
+      }
+    });
+  }
 });

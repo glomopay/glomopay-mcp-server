@@ -4,12 +4,23 @@ import { generateKeyPairSync } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import nock from 'nock';
 import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
-import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-node';
 import type { DataPoint, Histogram } from '@opentelemetry/sdk-metrics';
 
 import { flushApps } from '@/core/app/app.module';
 import { shutdownTelemetry } from '@/core/telemetry/telemetry.module';
-import { API_BASE, callTool, captureMixpanel, isRefused, signApiKey, startTestServer, type ITestServer } from './helpers';
+import {
+  API_BASE,
+  callTool,
+  captureMixpanel,
+  isRefused,
+  signApiKey,
+  startBrokenUpstream,
+  startTestServer,
+  UPSTREAM_REQUEST_ID,
+  type IFakeUpstream,
+  type ITestServer,
+} from './helpers';
 
 const MERCHANT = 'merch_4f9a8b7c6d5e';
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -26,10 +37,16 @@ const CUSTOMER_BODY = {
   country: 'IND',
 };
 
+const RESPONSE_SENTINEL = { id: 'cust_response_must_not_leak', email: 'response-must-not-leak@example.com' };
+
 let server: ITestServer;
+let statusServer: ITestServer;
+let statusUpstream: IFakeUpstream;
 
 beforeAll(async () => {
   server = await startTestServer({ env: { MIXPANEL_TOKEN: 'mixpanel-test-project-token' } });
+  statusUpstream = await startBrokenUpstream('status', { body: RESPONSE_SENTINEL });
+  statusServer = await startTestServer({ apiHost: statusUpstream.origin, env: { MIXPANEL_TOKEN: 'mixpanel-test-project-token' } });
 });
 
 beforeEach(() => {
@@ -47,7 +64,8 @@ afterEach(async () => {
 
 afterAll(async () => {
   nock.enableNetConnect();
-  await server.close();
+  await Promise.all([server.close(), statusServer.close()]);
+  await statusUpstream.close();
   await shutdownTelemetry();
 });
 
@@ -90,9 +108,7 @@ describe('traces', () => {
   });
 
   it('marks a failed call with status, errorCode and an error span status', async () => {
-    const scope = nock(API_BASE).get('/api/v1/payouts/payout_2').reply(503, {});
-    await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_2' } }, SANDBOX_KEY);
-    expect(scope.isDone()).toBe(true);
+    await callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_status_503' } }, SANDBOX_KEY);
 
     const [span] = toolSpans();
     expect(span.attributes).toMatchObject({ status: 'failed', errorCode: 'upstream_5xx', operationId: 'getPayoutById' });
@@ -118,6 +134,25 @@ describe('traces', () => {
     expect(client!.spanContext().traceId).toBe(toolSpan.spanContext().traceId);
     expect(client!.attributes['url.full']).toBe(`${API_BASE}/api/v1/customer`);
     expect(String(client!.attributes['url.full'])).not.toContain('page');
+  });
+
+  it('records the downstream URL as the path template, never the concrete path', async () => {
+    const id = 'jane.doe@example.com ABCDE1234F';
+    await callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id } }, SANDBOX_KEY);
+    expect(statusUpstream.requests.some((request) => request.path === `/api/v1/payouts/${encodeURIComponent(id)}`)).toBe(true);
+
+    const client = spans.getFinishedSpans().find((span) => span.kind === SpanKind.CLIENT);
+    expect(client!.attributes['url.full']).toBe(`${statusUpstream.origin}/api/v1/payouts/{id}`);
+    expect(client!.attributes['url.path']).toBe('/api/v1/payouts/{id}');
+  });
+
+  it('does not trace incoming requests, so no span carries the client address or User-Agent', async () => {
+    await callTool(server.url, 'glomo_api_search', { query: 'payout' }, SANDBOX_KEY, {
+      'X-Forwarded-For': '203.0.113.77',
+      'User-Agent': 'ua-sentinel/4.2',
+    });
+    expect(spans.getFinishedSpans().some((span) => span.kind === SpanKind.SERVER)).toBe(false);
+    expect(toolSpans()).toHaveLength(1);
   });
 
   it('carries the same mcpRequestId as the Mixpanel event, so the two can be joined', async () => {
@@ -167,11 +202,9 @@ describe('metrics', () => {
 
 describe('logs', () => {
   it('writes one audit record per glomo_api_write call, inside the tool span, without bodies', async () => {
-    const scope = nock(API_BASE)
-      .post('/api/v1/customer', CUSTOMER_BODY)
-      .reply(201, { id: 'cust_response_must_not_leak', email: 'response-must-not-leak@example.com' }, { 'x-request-id': 'req_7f3c2a1b' });
-    await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY);
-    expect(scope.isDone()).toBe(true);
+    await callTool(statusServer.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, SANDBOX_KEY);
+    expect(statusUpstream.requests.at(-1)).toMatchObject({ method: 'POST', path: '/api/v1/customer' });
+    expect(JSON.parse(statusUpstream.requests.at(-1)!.body)).toEqual(CUSTOMER_BODY);
 
     const audits = logRecords.getFinishedLogRecords().filter((record) => record.body === 'glomo_api_write call');
     expect(audits).toHaveLength(1);
@@ -180,7 +213,7 @@ describe('logs', () => {
       merchantId: MERCHANT,
       operationId: 'createCustomer',
       httpStatus: 201,
-      downstreamRequestId: 'req_7f3c2a1b',
+      downstreamRequestId: UPSTREAM_REQUEST_ID,
       status: 'success',
     });
 
@@ -208,5 +241,63 @@ describe('logs', () => {
     await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_3' } }, SANDBOX_KEY);
     expect(scope.isDone()).toBe(true);
     expect(logRecords.getFinishedLogRecords().filter((record) => record.body === 'glomo_api_write call')).toHaveLength(0);
+  });
+});
+
+describe('what telemetry never carries', () => {
+  const SENTINELS = {
+    pathParam: 'payout_pathsentinel9x',
+    queryParam: 'querysentinel7q',
+    bodyValue: 'bodysentinel3k',
+    responseBody: 'response-must-not-leak',
+    searchText: 'searchsentinel5m',
+    goalText: 'goalsentinel2p',
+    clientIp: '203.0.113.77',
+    userAgent: 'ua-sentinel/4.2',
+  };
+
+  it('holds no tool arguments, bodies, token, concrete path values, client IP or User-Agent in any span, metric or log', async () => {
+    const headers = { 'X-Forwarded-For': SENTINELS.clientIp, 'User-Agent': SENTINELS.userAgent };
+    await callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: SENTINELS.pathParam } }, SANDBOX_KEY, headers);
+    await callTool(statusServer.url, 'glomo_api_read', { operationId: 'getCustomers', params: { page: SENTINELS.queryParam } }, SANDBOX_KEY, headers);
+    await callTool(
+      statusServer.url,
+      'glomo_api_write',
+      { operationId: 'createCustomer', params: { ...CUSTOMER_BODY, name: SENTINELS.bodyValue } },
+      SANDBOX_KEY,
+      headers,
+    );
+    await callTool(
+      statusServer.url,
+      'glomo_api_read',
+      { operationId: 'getPayoutById', params: { id: `${SENTINELS.pathParam}_status_503` } },
+      SANDBOX_KEY,
+      headers,
+    );
+    await callTool(statusServer.url, 'glomo_api_search', { query: SENTINELS.searchText }, SANDBOX_KEY, headers);
+    await callTool(statusServer.url, 'glomo_implementation_planner', { goal: SENTINELS.goalText }, SANDBOX_KEY, headers);
+    expect(statusUpstream.requests.some((request) => request.body.includes(SENTINELS.bodyValue))).toBe(true);
+
+    await metricReader.forceFlush();
+    const everything = JSON.stringify({
+      spans: spans.getFinishedSpans().map((span) => ({
+        name: span.name,
+        attributes: span.attributes,
+        events: span.events,
+        status: span.status,
+        links: span.links,
+        resource: span.resource.attributes,
+      })),
+      metrics: metricExporter
+        .getMetrics()
+        .flatMap((resource) => resource.scopeMetrics.flatMap((scope) => scope.metrics))
+        .map((metric) => ({ name: metric.descriptor.name, points: metric.dataPoints.map((point) => point.attributes) })),
+      logs: logRecords.getFinishedLogRecords().map((record) => ({ body: record.body, attributes: record.attributes })),
+    });
+
+    expect(spans.getFinishedSpans().length).toBeGreaterThan(6);
+    for (const sentinel of [...Object.values(SENTINELS), SANDBOX_KEY, SANDBOX_KEY.split('.')[2], 'jti-must-not-leak', '1 Body Street']) {
+      expect(everything).not.toContain(sentinel);
+    }
   });
 });

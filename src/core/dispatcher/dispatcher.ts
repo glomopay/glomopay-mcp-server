@@ -12,6 +12,14 @@ function errorResult(text: string, errorCode: TErrorCode): CallToolResult {
   return { content: [{ type: 'text', text }], isError: true };
 }
 
+function unknownWriteOutcome(operationId: string, cause: string): string {
+  return (
+    `The outcome of "${operationId}" is unknown: no response arrived (${cause}), so the write may or may not have been applied. ` +
+    'Before retrying, look the resource up (for example by the request_id you sent, or by listing recent records) to see whether it was created. ' +
+    'If you retry, reuse the same request_id; do not retry with a new request_id.'
+  );
+}
+
 const REQUEST_ID_FORMAT = /^[A-Za-z0-9._:-]{1,128}$/;
 
 function downstreamRequestId(headers: Record<string, unknown> | undefined): string | undefined {
@@ -37,7 +45,7 @@ export class Dispatcher {
     if (!operation) {
       return errorResult(`Unknown operationId "${operationId}": not a documented glomo operation.`, 'unknown_operation');
     }
-    reportToolCall({ operationId });
+    reportToolCall({ operationId, pathTemplate: operation.path });
 
     if (!this.allowlist.has(operationId)) {
       return errorResult(`operationId "${operationId}" is not on the execution allowlist and cannot be called.`, 'unknown_operation');
@@ -115,6 +123,9 @@ export class Dispatcher {
       reportToolCall({ httpStatus: response.status, downstreamRequestId: downstreamRequestId(response.headers) });
       return { content: [{ type: 'text', text: JSON.stringify(response.data) }] };
     } catch (error) {
+      if (error instanceof ApiError && error.statusCode === undefined && method !== 'GET') {
+        return errorResult(unknownWriteOutcome(operationId, error.message), errorCodeForUpstream(error));
+      }
       if (error instanceof ApiError) {
         reportToolCall({ httpStatus: error.statusCode, downstreamRequestId: downstreamRequestId(error.headers) });
         return errorResult(

@@ -2,6 +2,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { Server } from 'node:http';
 import { sign, type KeyObject } from 'node:crypto';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer, type AddressInfo, type Socket } from 'node:net';
 
 import nock from 'nock';
@@ -40,6 +41,7 @@ export interface ITestServerOptions {
   authAudience?: string;
   apiHost?: string;
   downstreamTimeoutMs?: number;
+  analyticsTimeoutMs?: number;
   /** Environment the app is created under; restored afterwards. */
   env?: Record<string, string | undefined>;
 }
@@ -66,6 +68,7 @@ export async function startTestServer(options: ITestServerOptions = {}): Promise
       authAudience: 'authAudience' in options ? options.authAudience : AUTH_AUDIENCE,
       analyticsFlushIntervalMs: 5,
       downstreamTimeoutMs: options.downstreamTimeoutMs,
+      analyticsTimeoutMs: options.analyticsTimeoutMs,
     }),
   );
   const server: Server = await new Promise((resolve) => {
@@ -229,25 +232,21 @@ export interface IMixpanelCapture {
  * Intercepts Mixpanel's ingestion endpoint and decodes what the server sends.
  * Never record a cassette against Mixpanel: it would write to the real project.
  */
-export function captureMixpanel(reply: { status?: number; body?: string; delayMs?: number; networkError?: string } = {}): IMixpanelCapture {
+export function captureMixpanel(reply: { status?: number; body?: string } = {}): IMixpanelCapture {
   const events: IMixpanelEvent[] = [];
   const requests: { query: URLSearchParams; body: string }[] = [];
-  const record = (uri: string, body: unknown) => {
-    const raw = String(body);
-    requests.push({ query: new URL(uri, MIXPANEL_API).searchParams, body: raw });
-    const decoded = JSON.parse(Buffer.from(decodeURIComponent(raw.replace(/^data=/, '')), 'base64').toString('utf8')) as IMixpanelEvent[];
-    events.push(...decoded);
-  };
 
-  const interceptor = nock(MIXPANEL_API).persist().post('/track').query(true);
-  if (reply.delayMs) interceptor.delay(reply.delayMs);
-  const scope = reply.networkError
-    ? interceptor.replyWithError(reply.networkError)
-    : interceptor.reply((uri, body) => {
-        record(uri, body);
-        return [reply.status ?? 200, reply.body ?? '1'];
-      });
-  if (reply.networkError) scope.on('request', (req: { path: string }, _interceptor: unknown, body: string) => record(req.path, body));
+  const scope = nock(MIXPANEL_API)
+    .persist()
+    .post('/track')
+    .query(true)
+    .reply((uri, body) => {
+      const raw = String(body);
+      requests.push({ query: new URL(uri, MIXPANEL_API).searchParams, body: raw });
+      const data = new URLSearchParams(raw).get('data') ?? '';
+      events.push(...(JSON.parse(Buffer.from(data, 'base64').toString('utf8')) as IMixpanelEvent[]));
+      return [reply.status ?? 200, reply.body ?? '1'];
+    });
 
   const waitFor = async (count: number, timeoutMs = 2000) => {
     const deadline = Date.now() + timeoutMs;
@@ -258,27 +257,92 @@ export function captureMixpanel(reply: { status?: number; body?: string; delayMs
   return { events, requests, scope, waitFor };
 }
 
+export interface IUpstreamRequest {
+  method: string;
+  path: string;
+  body: string;
+}
+
+export interface IFakeUpstream {
+  origin: string;
+  /** Connections accepted so far, and the most that were open at once. */
+  stats: { connections: number; open: number; maxOpen: number };
+  requests: IUpstreamRequest[];
+  close: () => Promise<void>;
+}
+
+export const UPSTREAM_REQUEST_ID = 'req_7f3c2a1b';
+
+/** Records the request line of each HTTP request a raw socket receives (body chunks are skipped). */
+function recordRawRequest(requests: IUpstreamRequest[], chunk: string): void {
+  const [method, path] = chunk.split('\r\n')[0].split(' ');
+  if (/^[A-Z]+$/.test(method ?? '') && path?.startsWith('/')) requests.push({ method, path, body: '' });
+}
+
 /**
- * A real TCP endpoint that misbehaves the way a broken upstream does: it either
- * never answers or drops the connection as soon as it opens.
+ * A real local endpoint standing in for a misbehaving or specific upstream:
+ * - `silent` accepts connections, records each request line, and never answers;
+ * - `reset` drops each connection as soon as it opens;
+ * - `status` answers over HTTP with the status named in the path (`..._status_503`),
+ *   otherwise 200 (GET) or 201, with an `x-request-id` header and `body` as JSON.
  */
-export async function startBrokenUpstream(behaviour: 'silent' | 'reset'): Promise<{ origin: string; close: () => Promise<void> }> {
+export async function startBrokenUpstream(behaviour: 'silent' | 'reset' | 'status', options: { body?: unknown } = {}): Promise<IFakeUpstream> {
   const sockets = new Set<Socket>();
-  const upstream = createServer((socket) => {
+  const stats = { connections: 0, open: 0, maxOpen: 0 };
+  const requests: IUpstreamRequest[] = [];
+
+  const track = (socket: Socket) => {
     sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
-    if (behaviour === 'reset') socket.resetAndDestroy();
-  });
+    stats.connections += 1;
+    stats.open += 1;
+    stats.maxOpen = Math.max(stats.maxOpen, stats.open);
+    socket.on('close', () => {
+      sockets.delete(socket);
+      stats.open -= 1;
+    });
+  };
+
+  const upstream =
+    behaviour === 'status'
+      ? createHttpServer((req, res) => {
+          let body = '';
+          req.on('data', (chunk) => (body += chunk));
+          req.on('end', () => {
+            requests.push({ method: req.method ?? '', path: req.url ?? '', body });
+            const named = /_status_(\d{3})/.exec(req.url ?? '');
+            const status = named ? Number(named[1]) : req.method === 'GET' ? 200 : 201;
+            res.writeHead(status, { 'content-type': 'application/json', 'x-request-id': UPSTREAM_REQUEST_ID });
+            res.end(JSON.stringify(options.body ?? {}));
+          });
+        })
+      : createServer((socket) => {
+          if (behaviour === 'reset') socket.resetAndDestroy();
+          else socket.on('data', (chunk) => recordRawRequest(requests, String(chunk)));
+        });
+  upstream.on('connection', track);
+
   await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
   const { port } = upstream.address() as AddressInfo;
   return {
     origin: `http://127.0.0.1:${port}`,
+    stats,
+    requests,
     close: () =>
       new Promise((resolve) => {
         for (const socket of sockets) socket.destroy();
         upstream.close(() => resolve());
       }),
   };
+}
+
+/** Sends several JSON-RPC requests in one POST and waits for the whole reply. */
+export async function rpcBatch(url: string, messages: { method: string; params: unknown }[], bearer: string): Promise<string> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${bearer}` },
+    body: JSON.stringify(messages.map((message, index) => ({ jsonrpc: '2.0', id: index + 1, ...message }))),
+  });
+  return response.text();
 }
 
 export function pause(ms: number): Promise<void> {

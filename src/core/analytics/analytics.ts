@@ -1,18 +1,17 @@
-import Mixpanel from 'mixpanel';
-
 import type { IApiKeyClaims } from '@/features/auth/auth.module';
 import type { TErrorCode } from '@/core/telemetry/telemetry.module';
+import type { TToolName } from '@/shared/tool/tool.module';
 
 import type { TClientName } from './client-info';
 import { redactSearchQuery } from './search-query-redactor';
 
-export const MIXPANEL_HOST = 'api.mixpanel.com';
+export const DEFAULT_MIXPANEL_HOST = 'api.mixpanel.com';
 
 export type TAnalyticsEvent = 'mcp_session_submitted' | 'mcp_tool_submitted' | 'mcp_tool_failed';
 
 /** Every per-event property the server may send. Nothing else reaches Mixpanel. */
 export interface IAnalyticsProperties {
-  tool_name?: string;
+  tool_name?: TToolName;
   operation_id?: string;
   status?: 'success' | 'failed';
   error_code?: TErrorCode;
@@ -32,14 +31,19 @@ export interface IAnalytics {
 
 export interface IAnalyticsOptions {
   token?: string;
+  /** Mixpanel ingestion host, or a full origin. */
+  host?: string;
   sdkVersion: string;
   flushIntervalMs?: number;
+  requestTimeoutMs?: number;
   onDropped?: (count: number) => void;
 }
 
 const MAX_BATCH = 50;
 const MAX_QUEUE = 1000;
+const MAX_IN_FLIGHT = 4;
 const DEFAULT_FLUSH_INTERVAL_MS = 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 type TMixpanelEvent = { event: string; properties: Record<string, string | number> };
 
@@ -56,21 +60,29 @@ function definedOnly(properties: Record<string, string | number | undefined>): R
   return out;
 }
 
+function trackUrl(host: string): string {
+  const origin = host.includes('://') ? host.replace(/\/+$/, '') : `https://${host}`;
+  // ip=0 turns off geolocation; verbose=0 makes a success reply the body "1".
+  return `${origin}/track?ip=0&verbose=0`;
+}
+
 /**
- * Batched, fire-and-forget Mixpanel emitter. It sets the standard properties itself,
- * never throws into the caller, and counts every event it fails to deliver.
+ * Batched, fire-and-forget Mixpanel emitter over the /track endpoint. It sets the
+ * standard properties itself, never throws into the caller, bounds its queue, its
+ * concurrent requests and each request's duration, and counts every event it
+ * fails to deliver.
  */
 class MixpanelAnalytics implements IAnalytics {
-  private client: Mixpanel.Mixpanel;
   private queue: TMixpanelEvent[] = [];
   private timer: NodeJS.Timeout | undefined;
   private inFlight = new Set<Promise<void>>();
+  private url: string;
 
   constructor(
-    token: string,
+    private token: string,
     private options: IAnalyticsOptions,
   ) {
-    this.client = Mixpanel.init(token, { host: MIXPANEL_HOST, protocol: 'https', geolocate: false, keepAlive: true });
+    this.url = trackUrl(options.host ?? DEFAULT_MIXPANEL_HOST);
   }
 
   track(event: TAnalyticsEvent, identity: IApiKeyClaims | undefined, properties: IAnalyticsProperties): void {
@@ -80,6 +92,7 @@ class MixpanelAnalytics implements IAnalytics {
         return;
       }
       this.queue.push({ event, properties: this.buildProperties(identity, properties) });
+      if (this.queue.length >= MAX_BATCH) this.sendAvailable();
       this.schedule();
     } catch {
       this.dropped(1);
@@ -89,8 +102,10 @@ class MixpanelAnalytics implements IAnalytics {
   async flush(): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    while (this.queue.length > 0) this.send(this.queue.splice(0, MAX_BATCH));
-    await Promise.all([...this.inFlight]);
+    do {
+      this.sendAvailable();
+      await Promise.all([...this.inFlight]);
+    } while (this.queue.length > 0);
   }
 
   private buildProperties(identity: IApiKeyClaims | undefined, properties: IAnalyticsProperties): Record<string, string | number> {
@@ -101,6 +116,7 @@ class MixpanelAnalytics implements IAnalytics {
       search_query: properties.search_query === undefined ? undefined : redactSearchQuery(properties.search_query),
       distinct_id: merchantId ?? '',
       time: Date.now(),
+      token: this.token,
       product: 'mcp_server',
       platform: 'backend',
       sdk_version: this.options.sdkVersion,
@@ -111,33 +127,46 @@ class MixpanelAnalytics implements IAnalytics {
   }
 
   private schedule(): void {
-    if (this.queue.length >= MAX_BATCH) {
-      this.send(this.queue.splice(0, MAX_BATCH));
-    }
     if (this.timer || this.queue.length === 0) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      this.send(this.queue.splice(0, MAX_BATCH));
-      if (this.queue.length > 0) this.schedule();
+      this.sendAvailable();
+      this.schedule();
     }, this.options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS);
     this.timer.unref();
   }
 
+  /** Sends queued batches while there is request capacity; the rest waits in the bounded queue. */
+  private sendAvailable(): void {
+    while (this.queue.length > 0 && this.inFlight.size < MAX_IN_FLIGHT) this.send(this.queue.splice(0, MAX_BATCH));
+  }
+
   private send(batch: TMixpanelEvent[]): void {
-    if (batch.length === 0) return;
-    const request = new Promise<void>((resolve) => {
-      try {
-        this.client.track_batch(batch, (errors) => {
-          if (Array.isArray(errors) ? errors.some(Boolean) : errors) this.dropped(batch.length);
-          resolve();
-        });
-      } catch {
-        this.dropped(batch.length);
-        resolve();
-      }
-    });
+    const request = this.post(batch)
+      .then((delivered) => {
+        if (!delivered) this.dropped(batch.length);
+      })
+      .finally(() => {
+        this.inFlight.delete(request);
+        this.schedule();
+      });
     this.inFlight.add(request);
-    void request.finally(() => this.inFlight.delete(request));
+  }
+
+  private async post(batch: TMixpanelEvent[]): Promise<boolean> {
+    try {
+      const data = Buffer.from(JSON.stringify(batch)).toString('base64');
+      const response = await fetch(this.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ data }).toString(),
+        signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
+      });
+      const body = await response.text();
+      return response.ok && body.trim() === '1';
+    } catch {
+      return false;
+    }
   }
 
   private dropped(count: number): void {
