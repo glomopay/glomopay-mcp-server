@@ -48,15 +48,23 @@ describe('buildCorpus', () => {
     expect(corpus.map((page) => page.url)).toEqual(['https://docs.glomo.one/payin/purpose-codes.md', 'https://docs.glomo.one/platform/webhooks.md']);
   });
 
-  it('fails closed when a listed page does not return 200 markdown', async () => {
+  it('fails closed, naming the page, when a listed page returns non-200', async () => {
     nock(DOCS_ORIGIN).get('/llms.txt').reply(200, LLMS, { 'content-type': 'text/plain' });
     nock(DOCS_ORIGIN).get('/payin/purpose-codes.md').reply(200, '# ok', MD);
     nock(DOCS_ORIGIN).get('/platform/webhooks.md').times(2).reply(404);
 
-    await expect(buildCorpus()).rejects.toThrow();
+    await expect(buildCorpus()).rejects.toThrow(/webhooks\.md/);
   });
 
-  it('refuses a non-docs llms.txt URL', async () => {
-    await expect(buildCorpus('https://evil.example.com/llms.txt')).rejects.toThrow();
+  it('fails closed, naming the page, when a listed page returns non-markdown', async () => {
+    nock(DOCS_ORIGIN).get('/llms.txt').reply(200, LLMS, { 'content-type': 'text/plain' });
+    nock(DOCS_ORIGIN).get('/payin/purpose-codes.md').times(2).reply(200, '<html>soft 404</html>', { 'content-type': 'text/html' });
+    nock(DOCS_ORIGIN).get('/platform/webhooks.md').reply(200, '# Webhooks', MD);
+
+    await expect(buildCorpus()).rejects.toThrow(/purpose-codes\.md/);
+  });
+
+  it('refuses a non-docs llms.txt URL by reason', async () => {
+    await expect(buildCorpus('https://evil.example.com/llms.txt')).rejects.toThrow(/refusing non-docs/);
   });
 });
