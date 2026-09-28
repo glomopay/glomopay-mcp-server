@@ -1,4 +1,5 @@
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { Server } from 'node:http';
 
 import nock from 'nock';
@@ -6,8 +7,19 @@ import nock from 'nock';
 import { createApp } from '@/core/app/app.module';
 
 export const API_BASE = process.env.GLOMO_API_HOST ?? 'https://sandbox-api.glomopay.com';
-export const SANDBOX_TOKEN = process.env.GLOMO_SANDBOX_TOKEN ?? jwtToken('sandbox');
 export const isRecording = process.env.NOCK_BACK_MODE === 'record';
+
+export const TEST_AUDIENCE = 'glomo-mcp';
+const testKeyPair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+export const TEST_PUBLIC_KEY = testKeyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+// The server verifies against the real glomo key in record mode; test-signed
+// tokens are only accepted in lockdown replay. Re-recording execution cassettes
+// therefore needs a real MCP credential issued by glomo, not a test token.
+const AUTH_PUBLIC_KEY = process.env.GLOMO_MCP_PUBLIC_KEY ?? TEST_PUBLIC_KEY;
+const AUTH_AUDIENCE = process.env.GLOMO_MCP_AUDIENCE ?? TEST_AUDIENCE;
+
+export const SANDBOX_TOKEN = process.env.GLOMO_SANDBOX_TOKEN ?? jwtToken('sandbox');
 
 const FIXTURE_SPEC = path.resolve(__dirname, 'fixtures/openapi.json');
 
@@ -19,8 +31,21 @@ export interface ITestServer {
   close: () => Promise<void>;
 }
 
-export async function startTestServer(options: { specPath?: string; docsCorpusPath?: string } = {}): Promise<ITestServer> {
-  const app = await createApp({ specPath: options.specPath ?? FIXTURE_SPEC, apiHost: API_BASE, docsCorpusPath: options.docsCorpusPath });
+export interface ITestServerOptions {
+  specPath?: string;
+  docsCorpusPath?: string;
+  authPublicKey?: string;
+  authAudience?: string;
+}
+
+export async function startTestServer(options: ITestServerOptions = {}): Promise<ITestServer> {
+  const app = await createApp({
+    specPath: options.specPath ?? FIXTURE_SPEC,
+    apiHost: API_BASE,
+    docsCorpusPath: options.docsCorpusPath,
+    authPublicKey: 'authPublicKey' in options ? options.authPublicKey : AUTH_PUBLIC_KEY,
+    authAudience: 'authAudience' in options ? options.authAudience : AUTH_AUDIENCE,
+  });
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, () => resolve(listening));
   });
@@ -87,12 +112,32 @@ export async function withCassette(name: string, run: () => Promise<void>): Prom
   }
 }
 
+function b64url(value: object): string {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+// Sign an MCP credential the way glomo will: RS256, aud = the MCP audience, no
+// scope or purpose claim (every credential is read_write for now). Callers override
+// any claim via `extra` (e.g. a wrong aud, a foreign key).
 export function jwtToken(env?: string, extra: Record<string, unknown> = {}): string {
-  const payload = { ...(env ? { env } : {}), ...extra };
-  return `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.sig`;
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = { aud: TEST_AUDIENCE, iat: now, exp: now + 3600, ...(env ? { env } : {}), ...extra };
+  const signingInput = `${b64url(header)}.${b64url(payload)}`;
+  const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), testKeyPair.privateKey).toString('base64url');
+  return `${signingInput}.${signature}`;
 }
 
 export const jwt = jwtToken;
+
+// Sign an arbitrary header/payload with the test key, for cases jwtToken can't
+// express: a pinned-algorithm mismatch (e.g. RS512), or a missing required claim.
+export function signTestToken(payload: Record<string, unknown>, header: Record<string, unknown> = { alg: 'RS256', typ: 'JWT' }): string {
+  const digest = header.alg === 'RS512' ? 'RSA-SHA512' : 'RSA-SHA256';
+  const signingInput = `${b64url(header)}.${b64url(payload)}`;
+  const signature = crypto.sign(digest, Buffer.from(signingInput), testKeyPair.privateKey).toString('base64url');
+  return `${signingInput}.${signature}`;
+}
 
 export interface IToolResponse {
   result?: { content?: { text: string }[]; isError?: boolean };

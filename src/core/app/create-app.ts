@@ -5,6 +5,7 @@ import { createHttpServer } from '@/core/http/http-server.module';
 import { Dispatcher, loadSpecDocument, buildSpecIndex } from '@/core/dispatcher/dispatcher.module';
 import { buildCatalog } from '@/core/catalog/catalog.module';
 import { executionAllowlist } from '@/features/allowlist/allowlist.module';
+import { CredentialVerifier } from '@/features/auth/auth.module';
 import { ApiReadTool, ApiWriteTool } from '@/features/api-execution/api-execution.module';
 import { ApiSearchTool, ApiDetailsTool } from '@/features/api-discovery/api-discovery.module';
 import { SampleRequestTool } from '@/features/sample-request/sample-request.module';
@@ -17,10 +18,13 @@ export interface ICreateAppOptions {
   specPath: string;
   apiHost?: string;
   docsCorpusPath?: string;
+  authPublicKey?: string;
+  authAudience?: string;
 }
 
-export async function createApp({ specPath, apiHost, docsCorpusPath }: ICreateAppOptions): Promise<Express> {
+export async function createApp({ specPath, apiHost, docsCorpusPath, authPublicKey, authAudience }: ICreateAppOptions): Promise<Express> {
   const apiClient = new ApiClient({ baseURL: apiHost });
+  const verifier = new CredentialVerifier({ publicKeyPem: authPublicKey, audience: authAudience });
   const parsedSpec = await loadSpecDocument(specPath);
   const specIndex = buildSpecIndex(parsedSpec);
 
@@ -32,7 +36,7 @@ export async function createApp({ specPath, apiHost, docsCorpusPath }: ICreateAp
   const readOperationIds = allowedOperationIds.filter((operationId) => specIndex.get(operationId)!.method === 'GET');
   const writeOperationIds = allowedOperationIds.filter((operationId) => specIndex.get(operationId)!.method !== 'GET');
 
-  const dispatcher = new Dispatcher(specIndex, executionAllowlist, apiClient);
+  const dispatcher = new Dispatcher(specIndex, executionAllowlist, apiClient, verifier);
   const catalog = buildCatalog(parsedSpec, allowedOperationIds);
 
   const mcpServer = new MCPServer();

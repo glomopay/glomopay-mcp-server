@@ -8,6 +8,8 @@ import { config } from '@/features/app-config/app-config.module';
     specPath: path.resolve(__dirname, 'openapi.json'),
     apiHost: config.glomopay.apiHost,
     docsCorpusPath: path.resolve(__dirname, 'docs-corpus.json'),
+    authPublicKey: config.auth.mcpPublicKey,
+    authAudience: config.auth.mcpAudience,
   });
 
   app.listen(config.http.port, config.http.host, () => {
