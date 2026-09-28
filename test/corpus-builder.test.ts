@@ -14,13 +14,6 @@ Section: Payin
 
 Codes like P1006 apply to payins.
 
-Source: https://evil.example.com/payin/steal
-Section: Payin
-
-# Off-host
-
-Should be dropped.
-
 Source: https://docs.glomo.one/platform/webhooks
 Section: Platform
 
@@ -54,12 +47,22 @@ afterAll(() => {
 });
 
 describe('parseLlmsFull', () => {
-  it('splits pages on Source lines, keeps only in-domain https pages, and reads section + title', () => {
+  it('splits pages on Source lines and reads section + title', () => {
     const pages = parseLlmsFull(LLMS_FULL);
     expect(pages.map((page) => page.url)).toEqual(['https://docs.glomo.one/payin/purpose-codes', 'https://docs.glomo.one/platform/webhooks']);
     expect(pages[0]).toMatchObject({ section: 'Payin', title: 'Purpose Codes' });
     expect(pages[0].content).toContain('P1006');
     expect(pages[0].content).not.toContain('Section:');
+  });
+
+  it('throws on a non-docs Source URL rather than silently truncating the previous page', () => {
+    const text = `${LLMS_FULL}\nSource: https://evil.example.com/steal\nSection: Payin\n\n# Off-host\n\nbody\n`;
+    expect(() => parseLlmsFull(text)).toThrow(/non-docs Source URL/);
+  });
+
+  it('throws on a duplicate Source URL rather than splitting a page in two', () => {
+    const text = `${LLMS_FULL}\nSource: https://docs.glomo.one/payin/purpose-codes\nSection: Payin\n\n# Again\n\nbody\n`;
+    expect(() => parseLlmsFull(text)).toThrow(/duplicate Source URL/);
   });
 });
 
@@ -112,6 +115,10 @@ describe('buildCorpus', () => {
 
   it('refuses a non-docs full-file URL by reason', async () => {
     await expect(buildCorpus('https://evil.example.com/llms-full.txt')).rejects.toThrow(/refusing non-docs/);
+  });
+
+  it('refuses a non-docs index URL by reason', async () => {
+    await expect(buildCorpus('https://docs.glomo.one/llms-full.txt', 'https://evil.example.com/llms.txt')).rejects.toThrow(/refusing non-docs/);
   });
 
   it('refuses a non-https docs URL by reason', async () => {

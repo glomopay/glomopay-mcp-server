@@ -38,12 +38,13 @@ function titleOf(content: string, url: string): string {
 // safe delimiter is the `Source:` line itself.
 export function parseLlmsFull(text: string): ICorpusPage[] {
   const pages: ICorpusPage[] = [];
+  const seen = new Set<string>();
   let url: string | null = null;
   let section = '';
   let body: string[] = [];
 
   const flush = () => {
-    if (!url || !isDocsUrl(url)) return;
+    if (!url) return;
     const content = body.join('\n').trim();
     if (content) pages.push({ title: titleOf(content, url), url, section, sectionDescription: '', entryDescription: '', content });
   };
@@ -53,6 +54,9 @@ export function parseLlmsFull(text: string): ICorpusPage[] {
     if (source) {
       flush();
       url = source[1];
+      if (!isDocsUrl(url)) throw new Error(`[corpus] llms-full.txt has a non-docs Source URL: ${url}`);
+      if (seen.has(url)) throw new Error(`[corpus] llms-full.txt has a duplicate Source URL: ${url}`);
+      seen.add(url);
       section = '';
       body = [];
       continue;
