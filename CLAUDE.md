@@ -25,8 +25,8 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
   It verifies the agent credential (RS256 signature against the configured public key, `aud` = MCP audience,
   `purpose` = mcp, `exp`/`iat` required) and returns its `scope`/`env`/`sub`; the dispatcher enforces scope
   and the sandbox rule. The public key and audience come from env (`GLOMO_MCP_PUBLIC_KEY`,
-  `GLOMO_MCP_AUDIENCE`); no private key lives on this service. `iss` stays the per-merchant request host, so
-  it is not pinned.
+  `GLOMO_MCP_AUDIENCE`); no private key lives on this service. `iss` is not checked; `aud` and `purpose`
+  identify the credential.
 
 ## Adding an operation
 

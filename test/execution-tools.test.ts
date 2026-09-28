@@ -276,6 +276,12 @@ describe('agent credential verification', () => {
     expect(called).toBe(false);
   });
 
+  it('refuses a token with no purpose claim', async () => {
+    const { response, called } = await readWith(signTestToken(without('purpose')));
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
   it('refuses a tampered token', async () => {
     const [header, payload, signature] = jwt('sandbox').split('.');
     const forged = JSON.parse(Buffer.from(payload, 'base64url').toString());

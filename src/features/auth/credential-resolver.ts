@@ -22,9 +22,8 @@ export interface ICredentialVerifierConfig {
 
 const SCOPES: readonly TScope[] = ['read', 'write', 'both'];
 const CLOCK_TOLERANCE_SECONDS = 30;
-// The credential's `iss` stays the per-merchant request host (so the gateway resolves
-// the consumer), so it can't be pinned. The MCP boundary is `aud` = the MCP audience
-// plus `purpose` = mcp; a merchant's external-API key has neither.
+// `iss` is not checked: `aud` = the MCP audience plus `purpose` = mcp identify the
+// credential, and a merchant's external-API key has neither.
 const MCP_PURPOSE = 'mcp';
 
 function readToken(extra: TToolExtra): string | undefined {
