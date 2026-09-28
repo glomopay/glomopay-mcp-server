@@ -21,7 +21,7 @@ const CLOCK_TOLERANCE_SECONDS = 30;
 // `iss` is not checked: `aud` = the MCP audience alone identifies the credential,
 // and a merchant's external-API key carries the external-API audience instead.
 
-function readToken(extra: TToolExtra): string | undefined {
+function readToken(extra: Pick<TToolExtra, 'authInfo'>): string | undefined {
   return extra.authInfo?.token;
 }
 
@@ -45,7 +45,7 @@ export class CredentialVerifier {
     return this.key;
   }
 
-  async resolve(extra: TToolExtra): Promise<TCredentialResult> {
+  async resolve(extra: Pick<TToolExtra, 'authInfo'>): Promise<TCredentialResult> {
     const token = readToken(extra);
     if (!token) return { status: 'absent' };
 

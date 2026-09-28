@@ -4,6 +4,7 @@ export const ERROR_CODES = [
   'auth_missing',
   'auth_invalid',
   'auth_rejected',
+  'sandbox_only',
   'upstream_4xx',
   'upstream_5xx',
   'timeout',

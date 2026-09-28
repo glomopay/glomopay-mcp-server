@@ -1,6 +1,5 @@
 import { logRecords, metricExporter, metricReader, spans } from './otel-setup';
 
-import { generateKeyPairSync } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import nock from 'nock';
 import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
@@ -14,7 +13,7 @@ import {
   callTool,
   captureMixpanel,
   isRefused,
-  signApiKey,
+  jwt,
   startBrokenUpstream,
   startTestServer,
   UPSTREAM_REQUEST_ID,
@@ -23,9 +22,7 @@ import {
 } from './helpers';
 
 const MERCHANT = 'merch_4f9a8b7c6d5e';
-const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const SANDBOX_KEY = signApiKey({ sub: MERCHANT, env: 'sandbox', jti: 'jti-must-not-leak' }, keys.privateKey);
-const PRODUCTION_KEY = signApiKey({ sub: MERCHANT, env: 'production' }, keys.privateKey);
+const SANDBOX_KEY = jwt('sandbox', { sub: MERCHANT, jti: 'jti-must-not-leak' });
 
 const CUSTOMER_BODY = {
   name: 'Body Name Must Not Leak',
@@ -114,6 +111,24 @@ describe('traces', () => {
     expect(span.attributes).toMatchObject({ status: 'failed', errorCode: 'upstream_5xx', operationId: 'getPayoutById' });
     expect(span.status.code).toBe(SpanStatusCode.ERROR);
   });
+
+  for (const [tool, operationId, params] of [
+    ['glomo_api_read', 'getPayoutById', { id: 'payout_1' }],
+    ['glomo_api_write', 'createCustomer', CUSTOMER_BODY],
+  ] as const) {
+    it(`marks ${tool} with a production credential as a failed sandbox_only span and metric`, async () => {
+      const failedBefore = await counterValue('mcp.tool.calls', { toolName: tool, status: 'failed' });
+      const upstreamBefore = statusUpstream.requests.length;
+
+      await callTool(statusServer.url, tool, { operationId, params }, jwt('production', { sub: MERCHANT }));
+
+      expect(statusUpstream.requests).toHaveLength(upstreamBefore);
+      const [span] = toolSpans();
+      expect(span.attributes).toMatchObject({ toolName: tool, status: 'failed', errorCode: 'sandbox_only', operationId });
+      expect(span.status.code).toBe(SpanStatusCode.ERROR);
+      expect(await counterValue('mcp.tool.calls', { toolName: tool, status: 'failed' })).toBe(failedBefore + 1);
+    });
+  }
 
   it('records a span for a call refused by input validation', async () => {
     await callTool(server.url, 'glomo_api_search', { query: '' }, SANDBOX_KEY);
@@ -226,14 +241,15 @@ describe('logs', () => {
     for (const secret of ['must-not-leak', 'Body Name', '1 Body Street', SANDBOX_KEY]) expect(serialised).not.toContain(secret);
   });
 
-  it('audits a refused write too, with its errorCode and no httpStatus', async () => {
+  it('audits a refused write too, with its errorCode, no httpStatus and no merchantId for an unverified credential', async () => {
     const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
-    await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, PRODUCTION_KEY);
+    const unverified = jwt('sandbox', { sub: MERCHANT, aud: 'glomo-external-api' });
+    await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, unverified);
     expect(scope.isDone()).toBe(false);
 
     const [audit] = logRecords.getFinishedLogRecords().filter((record) => record.body === 'glomo_api_write call');
-    expect(audit.attributes).toMatchObject({ merchantId: MERCHANT, operationId: 'createCustomer', status: 'failed', errorCode: 'sandbox_only' });
-    expect(audit.attributes).not.toHaveProperty('httpStatus');
+    expect(audit.attributes).toMatchObject({ operationId: 'createCustomer', status: 'failed', errorCode: 'auth_invalid' });
+    expect(audit.attributes).not.toHaveProperty('merchantId');
   });
 
   it('writes no audit record for a read', async () => {

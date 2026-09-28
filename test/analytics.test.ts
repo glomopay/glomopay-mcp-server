@@ -18,6 +18,8 @@ import {
   resultText,
   SANDBOX_TOKEN,
   signApiKey,
+  signTestToken,
+  TEST_AUDIENCE,
   startBrokenUpstream,
   type IFakeUpstream,
   startTestServer,
@@ -31,19 +33,16 @@ const PACKAGE_VERSION = (JSON.parse(readFileSync(path.resolve(__dirname, '../pac
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const MERCHANT = 'merch_4f9a8b7c6d5e';
-const signingKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const otherKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const FAR_FUTURE = Math.floor(Date.now() / 1000) + 3600;
+const foreignKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const NOW = Math.floor(Date.now() / 1000);
 
-function apiKey(env: string, overrides: Record<string, unknown> = {}, privateKey = signingKeys.privateKey): string {
-  return signApiKey(
-    { sub: MERCHANT, env, jti: 'jti-must-not-leak', aud: 'aud-must-not-leak', iat: 1700000000, exp: FAR_FUTURE, ...overrides },
-    privateKey,
-  );
+/** An MCP credential the server verifies: signed with the test key, for the MCP audience. */
+function credential(env: string, overrides: Record<string, unknown> = {}): string {
+  return jwt(env, { sub: MERCHANT, jti: 'jti-must-not-leak', ...overrides });
 }
 
-const SANDBOX_KEY = apiKey('sandbox');
-const PRODUCTION_KEY = apiKey('production');
+const SANDBOX_KEY = credential('sandbox');
+const PRODUCTION_KEY = credential('production');
 
 const CUSTOMER_BODY = {
   name: 'Body Name Must Not Leak',
@@ -56,7 +55,6 @@ const CUSTOMER_BODY = {
 };
 
 let server: ITestServer;
-let verifyingServer: ITestServer;
 let silentServer: ITestServer;
 let statusServer: ITestServer;
 let statusUpstream: IFakeUpstream;
@@ -72,9 +70,7 @@ beforeAll(async () => {
   corpusPath = path.join(os.tmpdir(), `analytics-corpus-${process.pid}.json`);
   writeFileSync(corpusPath, JSON.stringify(corpus));
 
-  const publicPem = signingKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
-  server = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN, GLOMO_JWT_PUBLIC_KEY: undefined } });
-  verifyingServer = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN, GLOMO_JWT_PUBLIC_KEY: publicPem } });
+  server = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN } });
   silentServer = await startTestServer({ docsCorpusPath: corpusPath, env: { MIXPANEL_TOKEN: undefined } });
   statusUpstream = await startBrokenUpstream('status', { body: RESPONSE_SENTINEL });
   statusServer = await startTestServer({ apiHost: statusUpstream.origin, env: { MIXPANEL_TOKEN } });
@@ -91,7 +87,7 @@ afterEach(() => {
 
 afterAll(async () => {
   nock.enableNetConnect();
-  await Promise.all([server.close(), verifyingServer.close(), silentServer.close(), statusServer.close()]);
+  await Promise.all([server.close(), silentServer.close(), statusServer.close()]);
   await statusUpstream.close();
   rmSync(corpusPath, { force: true });
 });
@@ -312,11 +308,46 @@ describe('status and error_code', () => {
     expect(JSON.stringify(failed)).not.toContain('jane.doe');
   });
 
-  it('sandbox_only for a write with a production key, without calling the API', async () => {
+  it('auth_missing for an execution call with no credential, without calling the API', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+    await expectFailure(() => callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }), 'auth_missing');
+    expect(scope.isDone()).toBe(false);
+  });
+
+  for (const [tool, operationId, params] of [
+    ['glomo_api_read', 'getPayoutById', { id: 'payout_1' }],
+    ['glomo_api_write', 'createCustomer', CUSTOMER_BODY],
+  ] as const) {
+    it(`sandbox_only for ${tool} with a production credential, attributed to it, without calling the API`, async () => {
+      const upstreamBefore = statusUpstream.requests.length;
+      const { submitted, failed } = await expectFailure(
+        () => callTool(statusServer.url, tool, { operationId, params }, PRODUCTION_KEY),
+        'sandbox_only',
+      );
+      expect(statusUpstream.requests).toHaveLength(upstreamBefore);
+      expect(submitted.properties).toMatchObject({
+        tool_name: tool,
+        status: 'failed',
+        merchant_id: MERCHANT,
+        environment: 'production',
+        mode: 'live',
+      });
+      expect(failed.properties).toMatchObject({ tool_name: tool, operation_id: operationId });
+      expect(failed.properties).not.toHaveProperty('http_status');
+    });
+  }
+
+  it('auth_invalid for a credential that fails verification, without calling the API', async () => {
     const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
     await expectFailure(
-      () => callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, PRODUCTION_KEY),
-      'sandbox_only',
+      () =>
+        callTool(
+          server.url,
+          'glomo_api_write',
+          { operationId: 'createCustomer', params: CUSTOMER_BODY },
+          credential('sandbox', { aud: 'glomo-external-api' }),
+        ),
+      'auth_invalid',
     );
     expect(scope.isDone()).toBe(false);
   });
@@ -461,59 +492,89 @@ describe('status and error_code', () => {
   });
 });
 
-describe('identity', () => {
-  it('reads merchant_id, environment and mode from a sandbox key', async () => {
+describe('attribution', () => {
+  function expectAnonymous(event: IMixpanelEvent) {
+    expect(event.properties.distinct_id).toBe('');
+    expect(event.properties).not.toHaveProperty('merchant_id');
+    expect(event.properties).not.toHaveProperty('environment');
+    expect(event.properties).not.toHaveProperty('mode');
+  }
+
+  it('reads merchant_id, environment and mode from a verified sandbox credential', async () => {
     const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, SANDBOX_KEY));
     expect(submitted.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT, environment: 'sandbox', mode: 'test' });
   });
 
-  it('reads merchant_id, environment and mode from a production key', async () => {
+  it('reads merchant_id, environment and mode from a verified production credential', async () => {
     const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, PRODUCTION_KEY));
     expect(submitted.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT, environment: 'production', mode: 'live' });
   });
 
-  it('decodes without verifying when no public key is configured', async () => {
+  it('takes environment and mode from the verified env claim, and leaves them off when it has none', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, jwt(undefined, { sub: MERCHANT })));
+    expect(submitted.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT });
+    expect(submitted.properties).not.toHaveProperty('environment');
+    expect(submitted.properties).not.toHaveProperty('mode');
+  });
+
+  it('attributes an execution call from the credential the dispatcher verified', async () => {
     const { submitted } = await onSuccess(() =>
-      callTool(server.url, 'glomo_api_search', { query: 'payout' }, apiKey('sandbox', {}, otherKeys.privateKey)),
+      callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_1' } }, SANDBOX_KEY),
     );
-    expect(submitted.properties.merchant_id).toBe(MERCHANT);
+    expect(submitted.properties).toMatchObject({ tool_name: 'glomo_api_read', merchant_id: MERCHANT, environment: 'sandbox', mode: 'test' });
   });
 
-  it('keeps the identity of a key whose signature verifies', async () => {
-    const { submitted } = await onSuccess(() => callTool(verifyingServer.url, 'glomo_api_search', { query: 'payout' }, PRODUCTION_KEY));
-    expect(submitted.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT, environment: 'production', mode: 'live' });
+  it('attributes an execution call refused by input validation, before the dispatcher runs', async () => {
+    const { failed } = await onFailure(() => callTool(server.url, 'glomo_api_read', { operationId: 'notAnOperation' }, SANDBOX_KEY));
+    expect(failed!.properties).toMatchObject({ error_code: 'validation_error', merchant_id: MERCHANT, environment: 'sandbox' });
   });
 
-  for (const [label, token] of [
-    ['is signed by another key', apiKey('sandbox', {}, otherKeys.privateKey)],
-    ['is unsigned', jwt('sandbox', { sub: MERCHANT })],
-    ['claims a non-RS256 algorithm', signApiKey({ sub: MERCHANT, env: 'sandbox' }, signingKeys.privateKey, { alg: 'HS256' })],
-    ['has expired', apiKey('sandbox', { exp: Math.floor(Date.now() / 1000) - 60 })],
-  ] as const) {
-    it(`treats a key that ${label} as anonymous when verification is on`, async () => {
-      const { submitted } = await onSuccess(() => callTool(verifyingServer.url, 'glomo_api_search', { query: 'payout' }, token));
-      expect(submitted.properties.distinct_id).toBe('');
-      expect(submitted.properties).not.toHaveProperty('merchant_id');
-      expect(submitted.properties).not.toHaveProperty('mode');
-      expect(submitted.properties).not.toHaveProperty('environment');
+  it('attributes the session event from a verified credential', async () => {
+    const mixpanel = captureMixpanel();
+    await initialize(server.url, { name: 'claude-code', version: '2.0.14' }, SANDBOX_KEY);
+    const [event] = await mixpanel.waitFor(1);
+    expect(event.properties).toMatchObject({ distinct_id: MERCHANT, merchant_id: MERCHANT, environment: 'sandbox', mode: 'test' });
+  });
+
+  const WRONG_AUDIENCE = credential('sandbox', { aud: 'glomo-external-api' });
+  const UNVERIFIED: [string, string][] = [
+    [
+      'is signed by another key',
+      signApiKey({ sub: MERCHANT, env: 'sandbox', aud: TEST_AUDIENCE, iat: NOW, exp: NOW + 3600 }, foreignKeys.privateKey),
+    ],
+    ['is for another audience', WRONG_AUDIENCE],
+    ['has expired', credential('sandbox', { iat: NOW - 7200, exp: NOW - 3600 })],
+    ['has no expiry', signTestToken({ sub: MERCHANT, env: 'sandbox', aud: TEST_AUDIENCE, iat: NOW })],
+    ['is unsigned', `${jwt('sandbox', { sub: MERCHANT }).split('.').slice(0, 2).join('.')}.`],
+    ['is not a JWT', 'not-a-jwt'],
+  ];
+
+  for (const [label, token] of UNVERIFIED) {
+    it(`sends a discovery call anonymously when the credential ${label}`, async () => {
+      const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, token));
+      expectAnonymous(submitted);
+      expect(submitted.properties).toMatchObject({ product: 'mcp_server', platform: 'backend', tool_name: 'glomo_api_search' });
     });
   }
 
-  it('sends an anonymous event for a key that is not a JWT', async () => {
-    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }, 'not-a-jwt'));
-    expect(submitted.properties.distinct_id).toBe('');
-    expect(submitted.properties).not.toHaveProperty('merchant_id');
-    expect(submitted.properties).not.toHaveProperty('mode');
-    expect(submitted.properties).not.toHaveProperty('environment');
-    expect(submitted.properties).toMatchObject({ product: 'mcp_server', platform: 'backend', tool_name: 'glomo_api_search' });
+  it('sends an execution call anonymously when the dispatcher rejects its credential', async () => {
+    const { submitted, failed } = await onFailure(() =>
+      callTool(statusServer.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'payout_1' } }, WRONG_AUDIENCE),
+    );
+    expectAnonymous(submitted);
+    expect(failed!.properties).toMatchObject({ error_code: 'auth_invalid' });
   });
 
-  it('sends an anonymous session event for a key that is not a JWT', async () => {
+  it('sends a call with no credential anonymously', async () => {
+    const { submitted } = await onSuccess(() => callTool(server.url, 'glomo_api_search', { query: 'payout' }));
+    expectAnonymous(submitted);
+  });
+
+  it('sends the session event anonymously when the credential does not verify', async () => {
     const mixpanel = captureMixpanel();
-    await initialize(server.url, { name: 'claude-code', version: '2.0.14' }, 'not-a-jwt');
+    await initialize(server.url, { name: 'claude-code', version: '2.0.14' }, WRONG_AUDIENCE);
     const [event] = await mixpanel.waitFor(1);
-    expect(event.properties.distinct_id).toBe('');
-    expect(event.properties).not.toHaveProperty('merchant_id');
+    expectAnonymous(event);
   });
 });
 
@@ -667,7 +728,7 @@ describe('what is never sent', () => {
       SANDBOX_KEY,
       SANDBOX_KEY.split('.')[1],
       'jti-must-not-leak',
-      'aud-must-not-leak',
+      TEST_AUDIENCE,
       'Body Name Must Not Leak',
       'body-must-not-leak',
       '1 Body Street',

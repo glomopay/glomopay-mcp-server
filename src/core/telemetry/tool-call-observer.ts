@@ -1,4 +1,4 @@
-import { randomUUID, type KeyObject } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 import { context, metrics, trace, SpanKind, SpanStatusCode, type Counter, type Histogram, type Span } from '@opentelemetry/api';
@@ -15,7 +15,7 @@ import {
   type MessageExtraInfo,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { readApiKeyClaims, type IApiKeyClaims } from '@/features/auth/auth.module';
+import type { CredentialVerifier } from '@/features/auth/auth.module';
 import {
   clientFromInitialize,
   clientFromUserAgent,
@@ -26,7 +26,7 @@ import {
 import { logger } from '@/shared/logger/logger.module';
 import type { TToolName } from '@/shared/tool/tool.module';
 
-import { runWithToolCall, type IToolCallDetails } from './call-context';
+import { runWithToolCall, type IToolCallDetails, type TVerifiedCaller } from './call-context';
 import type { TErrorCode } from './error-code';
 import { SERVICE_NAME } from './otel';
 
@@ -38,7 +38,7 @@ interface IPendingCall {
   startedAt: number;
   span: Span;
   details: IToolCallDetails;
-  identity: IApiKeyClaims | undefined;
+  authInfo: MessageExtraInfo['authInfo'];
   client: IClientInfo;
 }
 
@@ -61,8 +61,8 @@ export function createToolMetrics(): IToolMetrics {
 export interface IToolCallObserverOptions {
   analytics: IAnalytics;
   metrics: IToolMetrics;
-  /** Verifies API key signatures when set. null means verification is required but impossible. */
-  jwtPublicKey?: KeyObject | null;
+  /** The same verifier the dispatcher uses; attribution comes only from a credential it accepts. */
+  verifier: CredentialVerifier;
 }
 
 function header(extra: MessageExtraInfo | undefined, name: string): string | undefined {
@@ -83,6 +83,7 @@ function failureCode(message: JSONRPCResponse | JSONRPCError, reported: TErrorCo
  */
 export class ToolCallObserver {
   private tracer = trace.getTracer(SERVICE_NAME);
+  private attributing = new Set<Promise<void>>();
 
   constructor(private options: IToolCallObserverOptions) {}
 
@@ -126,7 +127,7 @@ export class ToolCallObserver {
       startedAt: performance.now(),
       span: this.tracer.startSpan(`tools/call ${toolName}`, { kind: SpanKind.INTERNAL, attributes: { toolName, mcpRequestId } }),
       details: {},
-      identity: this.identify(extra),
+      authInfo: extra?.authInfo,
       client: clientFromUserAgent(header(extra, 'user-agent')),
     };
   }
@@ -134,21 +135,40 @@ export class ToolCallObserver {
   private onInitialize(message: JSONRPCRequest, extra: MessageExtraInfo | undefined): void {
     const clientInfo = (message.params as { clientInfo?: unknown } | undefined)?.clientInfo;
     const client = clientInfo ? clientFromInitialize(clientInfo) : clientFromUserAgent(header(extra, 'user-agent'));
-    this.options.analytics.track('mcp_session_submitted', this.identify(extra), {
-      client_name: client.clientName,
-      client_version: client.clientVersion,
-      mcp_request_id: randomUUID(),
-    });
+    const properties = { client_name: client.clientName, client_version: client.clientVersion, mcp_request_id: randomUUID() };
+    this.withCaller(this.verifyCaller(extra?.authInfo), (caller) => this.options.analytics.track('mcp_session_submitted', caller, properties));
   }
 
-  private identify(extra: MessageExtraInfo | undefined): IApiKeyClaims | undefined {
-    const { jwtPublicKey } = this.options;
-    if (jwtPublicKey === null) return undefined;
-    return readApiKeyClaims(extra?.authInfo?.token, jwtPublicKey);
+  /** Resolves once every event still waiting on credential verification has been handed to analytics. */
+  async settle(): Promise<void> {
+    while (this.attributing.size > 0) await Promise.allSettled([...this.attributing]);
+  }
+
+  /** Verifies a credential the dispatcher did not (initialize, discovery tools, calls refused before dispatch). */
+  private async verifyCaller(authInfo: MessageExtraInfo['authInfo']): Promise<TVerifiedCaller | undefined> {
+    const credential = await this.options.verifier.resolve({ authInfo });
+    return credential.status === 'valid' ? { sub: credential.credential.sub, env: credential.credential.env } : undefined;
+  }
+
+  /** Runs `use` now when the caller is already known, otherwise once verification settles. */
+  private withCaller(
+    caller: TVerifiedCaller | undefined | Promise<TVerifiedCaller | undefined>,
+    use: (caller: TVerifiedCaller | undefined) => void,
+  ): void {
+    if (!(caller instanceof Promise)) {
+      use(caller);
+      return;
+    }
+    const pending = caller.then(
+      (verified) => this.safely(() => use(verified)),
+      () => this.safely(() => use(undefined)),
+    );
+    this.attributing.add(pending);
+    void pending.finally(() => this.attributing.delete(pending));
   }
 
   private finish(call: IPendingCall, message: JSONRPCResponse | JSONRPCError): void {
-    const { toolName, mcpRequestId, span, details, identity, client } = call;
+    const { toolName, span, details } = call;
     const errorCode = failureCode(message, details.errorCode);
     const status = errorCode ? 'failed' : 'success';
     const durationMs = Math.round(performance.now() - call.startedAt);
@@ -162,11 +182,26 @@ export class ToolCallObserver {
 
     this.options.metrics.toolCalls.add(1, { toolName, status });
     this.options.metrics.toolDuration.record(durationMs, { toolName, status });
+    span.end();
+
+    // The dispatcher reports the caller when it verified the credential; otherwise verify it here, once.
+    const caller = details.caller !== undefined ? (details.caller ?? undefined) : this.verifyCaller(call.authInfo);
+    this.withCaller(caller, (verified) => this.report(call, verified, status, errorCode, durationMs));
+  }
+
+  private report(
+    call: IPendingCall,
+    caller: TVerifiedCaller | undefined,
+    status: 'success' | 'failed',
+    errorCode: TErrorCode | undefined,
+    durationMs: number,
+  ): void {
+    const { toolName, mcpRequestId, span, details, client } = call;
 
     if (toolName === WRITE_TOOL) {
       context.with(trace.setSpan(context.active(), span), () =>
         logger.info('glomo_api_write call', {
-          merchantId: identity?.sub,
+          merchantId: caller?.sub,
           operationId: details.operationId,
           httpStatus: details.httpStatus,
           downstreamRequestId: details.downstreamRequestId,
@@ -176,7 +211,6 @@ export class ToolCallObserver {
         }),
       );
     }
-    span.end();
 
     const properties: IAnalyticsProperties = {
       tool_name: toolName,
@@ -190,8 +224,8 @@ export class ToolCallObserver {
       client_version: client.clientVersion,
       mcp_request_id: mcpRequestId,
     };
-    this.options.analytics.track('mcp_tool_submitted', identity, properties);
-    if (errorCode) this.options.analytics.track('mcp_tool_failed', identity, { ...properties, error_code: errorCode });
+    this.options.analytics.track('mcp_tool_submitted', caller, properties);
+    if (errorCode) this.options.analytics.track('mcp_tool_failed', caller, { ...properties, error_code: errorCode });
   }
 
   private safely<T>(run: () => T): T | undefined {

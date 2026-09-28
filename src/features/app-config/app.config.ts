@@ -18,8 +18,5 @@ export const config = {
   auth: {
     mcpPublicKey: process.env.GLOMO_MCP_PUBLIC_KEY,
     mcpAudience: process.env.GLOMO_MCP_AUDIENCE,
-    get jwtPublicKey(): string | undefined {
-      return process.env.GLOMO_JWT_PUBLIC_KEY || undefined;
-    },
   },
 };

@@ -60,6 +60,7 @@ export class Dispatcher {
     }
 
     const credential = await this.verifier.resolve(extra);
+    reportToolCall({ caller: credential.status === 'valid' ? { sub: credential.credential.sub, env: credential.credential.env } : null });
     if (credential.status === 'absent') {
       return errorResult('Unauthorized: no glomo credential supplied for this request.', 'auth_missing');
     }
@@ -69,7 +70,7 @@ export class Dispatcher {
 
     const { token: secret, env } = credential.credential;
     if (env !== 'sandbox') {
-      return errorResult(`Refusing "${operationId}": the execution tools are sandbox-only and require a sandbox credential.`);
+      return errorResult(`Refusing "${operationId}": the execution tools are sandbox-only and require a sandbox credential.`, 'sandbox_only');
     }
 
     // Route from the raw params; the glomo API validates the body. A derived

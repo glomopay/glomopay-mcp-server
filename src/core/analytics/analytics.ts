@@ -1,5 +1,4 @@
-import type { IApiKeyClaims } from '@/features/auth/auth.module';
-import type { TErrorCode } from '@/core/telemetry/telemetry.module';
+import type { TErrorCode, TVerifiedCaller } from '@/core/telemetry/telemetry.module';
 import type { TToolName } from '@/shared/tool/tool.module';
 
 import type { TClientName } from './client-info';
@@ -25,7 +24,7 @@ export interface IAnalyticsProperties {
 }
 
 export interface IAnalytics {
-  track(event: TAnalyticsEvent, identity: IApiKeyClaims | undefined, properties: IAnalyticsProperties): void;
+  track(event: TAnalyticsEvent, caller: TVerifiedCaller | undefined, properties: IAnalyticsProperties): void;
   flush(): Promise<void>;
 }
 
@@ -38,6 +37,9 @@ export interface IAnalyticsOptions {
   requestTimeoutMs?: number;
   onDropped?: (count: number) => void;
 }
+
+const SUBJECT_FORMAT = /^[A-Za-z0-9_-]{1,64}$/;
+const ENVIRONMENTS: readonly string[] = ['production', 'sandbox'];
 
 const MAX_BATCH = 50;
 const MAX_QUEUE = 1000;
@@ -86,13 +88,13 @@ class MixpanelAnalytics implements IAnalytics {
     this.url = trackUrl(options.host ?? DEFAULT_MIXPANEL_HOST);
   }
 
-  track(event: TAnalyticsEvent, identity: IApiKeyClaims | undefined, properties: IAnalyticsProperties): void {
+  track(event: TAnalyticsEvent, caller: TVerifiedCaller | undefined, properties: IAnalyticsProperties): void {
     try {
       if (this.queue.length >= MAX_QUEUE) {
         this.dropped(1);
         return;
       }
-      this.queue.push({ event, properties: this.buildProperties(identity, properties) });
+      this.queue.push({ event, properties: this.buildProperties(caller, properties) });
       if (this.queue.length >= MAX_BATCH) this.sendAvailable();
       this.schedule();
     } catch {
@@ -115,9 +117,9 @@ class MixpanelAnalytics implements IAnalytics {
     }
   }
 
-  private buildProperties(identity: IApiKeyClaims | undefined, properties: IAnalyticsProperties): Record<string, string | number> {
-    const merchantId = identity?.sub;
-    const environment = identity?.env;
+  private buildProperties(caller: TVerifiedCaller | undefined, properties: IAnalyticsProperties): Record<string, string | number> {
+    const merchantId = caller?.sub !== undefined && SUBJECT_FORMAT.test(caller.sub) ? caller.sub : undefined;
+    const environment = caller?.env !== undefined && ENVIRONMENTS.includes(caller.env) ? caller.env : undefined;
     return definedOnly({
       ...properties,
       search_query: properties.search_query === undefined ? undefined : redactSearchQuery(properties.search_query),

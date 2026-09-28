@@ -1,5 +1,3 @@
-import type { KeyObject } from 'node:crypto';
-
 import type { Express } from 'express';
 
 import { MCPServer } from '@/core/mcp-server/mcp-server.module';
@@ -19,7 +17,6 @@ import { logger } from '@/shared/logger/logger.module';
 import { packageVersion } from '@/shared/package-info/package-info.module';
 import { createAnalytics, type IAnalytics } from '@/core/analytics/analytics.module';
 import { ToolCallObserver, createToolMetrics } from '@/core/telemetry/telemetry.module';
-import { parsePublicKey } from '@/features/auth/auth.module';
 import { config } from '@/features/app-config/app-config.module';
 
 export interface ICreateAppOptions {
@@ -45,17 +42,8 @@ export async function flushApps(): Promise<void> {
   await Promise.all(shutdownHooks.map((hook) => hook().catch(() => undefined)));
 }
 
-/** undefined: no key configured. null: a key is configured but unreadable, so nothing verifies. */
-function readPublicKey(): KeyObject | undefined | null {
-  try {
-    return parsePublicKey(config.auth.jwtPublicKey);
-  } catch {
-    logger.error('GLOMO_JWT_PUBLIC_KEY is not a valid PEM public key; every API key is treated as anonymous');
-    return null;
-  }
-}
-
 function createObserver(
+  verifier: CredentialVerifier,
   analyticsFlushIntervalMs: number | undefined,
   analyticsTimeoutMs: number | undefined,
 ): { observer: ToolCallObserver; analytics: IAnalytics } {
@@ -68,7 +56,7 @@ function createObserver(
     requestTimeoutMs: analyticsTimeoutMs,
     onDropped: (count) => metrics.analyticsDropped.add(count),
   });
-  return { observer: new ToolCallObserver({ analytics, metrics, jwtPublicKey: readPublicKey() }), analytics };
+  return { observer: new ToolCallObserver({ analytics, metrics, verifier }), analytics };
 }
 
 export async function createApp({
@@ -97,8 +85,11 @@ export async function createApp({
   const dispatcher = new Dispatcher(specIndex, executionAllowlist, apiClient, verifier);
   const catalog = buildCatalog(parsedSpec, allowedOperationIds);
 
-  const { observer, analytics } = createObserver(analyticsFlushIntervalMs, analyticsTimeoutMs);
-  shutdownHooks.push(() => analytics.flush());
+  const { observer, analytics } = createObserver(verifier, analyticsFlushIntervalMs, analyticsTimeoutMs);
+  shutdownHooks.push(async () => {
+    await observer.settle();
+    await analytics.flush();
+  });
 
   const mcpServer = new MCPServer(observer);
   if (docsCorpusPath) mcpServer.registerTool(new DocsSearchTool(DocsIndex.fromCorpusFile(docsCorpusPath)));

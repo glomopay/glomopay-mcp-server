@@ -32,11 +32,15 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 - Telemetry (`src/core/telemetry`, `src/core/analytics`) watches each transport's JSON-RPC traffic, so tools never
   emit events. A tool reports what it knows about its own call with `reportToolCall` (`operationId`, `httpStatus`,
   `resultCount`, `searchQuery`, `errorCode`, `pathTemplate`); nothing else can reach Mixpanel or a span. Every
-  `isError` path reports an `errorCode` from the fixed list in `error-code.ts`. Env vars (`MIXPANEL_*`,
-  `GLOMO_JWT_PUBLIC_KEY`, `OTEL_*`) are in README.md.
+  `isError` path reports an `errorCode` from the fixed list in `error-code.ts` (listed in README.md, Telemetry). Env vars (`MIXPANEL_*`,
+  `DEPLOYMENT_ENVIRONMENT`, `OTEL_*`) are in README.md.
 - A write that gets no response (timeout, dropped connection) returns an "outcome unknown" error telling the agent
   to look the resource up before retrying and never to retry with a new request_id.
-- `readApiKeyClaims` (`src/features/auth/api-key-claims.ts`) is the one reader of API key claims (`sub`, `env`).
+- Attribution (`merchant_id`, `environment`, the audit `merchantId`) comes only from `CredentialVerifier`'s verified
+  `sub`/`env`. The dispatcher reports `caller` where it verifies; for a call it never verified, the observer runs
+  the same verifier once. Never decode a token for attribution.
+- `search_query` keeps redacted free text by product decision. The redactor does not catch names or IDs shorter
+  than 9 digits; that is accepted residual risk (README.md, Telemetry).
 - Mixpanel properties are snake_case; OTel span, metric and log attributes are camelCase. Log through
   `@/shared/logger/logger.module`, not `console`.
 

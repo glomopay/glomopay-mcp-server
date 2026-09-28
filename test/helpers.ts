@@ -202,7 +202,7 @@ export function initialize(url: string, clientInfo: unknown, bearer: string, hea
   );
 }
 
-/** An RS256 JWT shaped like a glomo private API key, signed with a throwaway test key. */
+/** An RS256 JWT signed with the given key, e.g. a foreign key the server must not accept. */
 export function signApiKey(
   claims: Record<string, unknown>,
   privateKey: KeyObject,
