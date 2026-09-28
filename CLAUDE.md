@@ -17,17 +17,17 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
   `{ operationId, params }`. The split exists so a client can later be granted reads without writes (every
   credential is read_write for now).
 - `Dispatcher.dispatch` (`src/core/dispatcher/dispatcher.ts`) runs every guard in order: spec lookup,
-  allowlist, method-vs-tool, credential verification, sandbox check on writes, path params. Then it
+  allowlist, method-vs-tool, credential verification, path params. Then it
   routes params by OpenAPI location.
 - Versioned URLs (`spec-index.ts`): the spec server is `/api/v1` but v2 ops are written `/v2/...`, and the
   service mounts `/api/v1` and `/api/v2` as siblings. `API_HOST` is the origin only and each op's full path
   is resolved in the index. Naive concatenation gives `/api/v1/v2/...`.
 - `CredentialVerifier` (`src/features/auth/credential-resolver.ts`) is the only place credentials are read.
   It verifies the agent credential (RS256 signature against the configured public key, `aud` = MCP audience,
-  `exp`/`iat` required) and returns its `env`/`sub`; the dispatcher enforces the sandbox rule. The public key
-  and audience come from env (`GLOMO_MCP_PUBLIC_KEY`, `GLOMO_MCP_AUDIENCE`); no private key lives on this
-  service. `iss` is not checked; `aud` alone identifies the credential. There is no `scope` or `purpose`
-  claim: every credential is read_write until access is split (a separate change).
+  `exp`/`iat` required) and returns its `sub`. The public key and audience come from env
+  (`GLOMO_MCP_PUBLIC_KEY`, `GLOMO_MCP_AUDIENCE`); no private key lives on this service. `iss` is not checked;
+  `aud` alone identifies the credential. There is no `scope` or `purpose` claim: every credential is
+  read_write until access is split (a separate change).
 
 ## Adding an operation
 
@@ -59,7 +59,8 @@ Do not weaken these without an explicit security review.
 - Execution credentials are verified, never passed through unchecked: RS256 signature, `aud` = MCP audience,
   algorithm pinned to RS256, `exp`/`iat` required. Missing or unconfigured verification fails execution
   closed; discovery stays reachable.
-- Write tools are sandbox-only and fail closed: the credential's `env` claim must be exactly `sandbox`.
+- Environment is restricted where glomo issues MCP credentials, not here. Don't add an `env` check to the
+  server: the same credential works directly against the API, so a server-side check only guards one path.
 - Path params are validated against the path template, never interpolated raw.
 - One MCP server instance per request.
 

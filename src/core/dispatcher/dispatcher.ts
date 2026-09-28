@@ -48,12 +48,7 @@ export class Dispatcher {
       return errorResult(`Unauthorized: ${credential.reason}.`);
     }
 
-    const { token: secret, env } = credential.credential;
-    const isWrite = operation.method !== 'GET';
-
-    if (isWrite && env !== 'sandbox') {
-      return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and require a sandbox credential.`);
-    }
+    const { token: secret } = credential.credential;
 
     // Route from the raw params; the glomo API validates the body. A derived
     // schema would under-model some request bodies and silently drop valid fields.

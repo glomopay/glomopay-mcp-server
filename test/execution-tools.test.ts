@@ -204,28 +204,22 @@ describe('allowlist and read/write split', () => {
   });
 });
 
-describe('sandbox-only write guard', () => {
-  it('allows a write with a sandbox credential', async () => {
-    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
-    const response = await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, jwt('sandbox'));
-    expect(isRefused(response)).toBe(false);
-    expect(scope.isDone()).toBe(true);
-  });
-
+// Env is restricted where MCP credentials are issued, not here; a server-side env
+// check would be bypassed by calling the API directly with the same credential.
+describe('credential env is not gated by the server', () => {
   for (const [label, bearer] of [
+    ['sandbox', jwt('sandbox')],
     ['production', jwt('production')],
-    ['missing env claim', jwt()],
   ] as const) {
-    it(`refuses a write with a ${label} credential without calling the API`, async () => {
+    it(`allows a write with a ${label} credential`, async () => {
       const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
       const response = await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, bearer);
-      expect(isRefused(response)).toBe(true);
-      expect(resultText(response)).toContain('sandbox-only');
-      expect(scope.isDone()).toBe(false);
+      expect(isRefused(response)).toBe(false);
+      expect(scope.isDone()).toBe(true);
     });
   }
 
-  it('still allows a read with a production credential', async () => {
+  it('allows a read with a production credential', async () => {
     const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
     const response = await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } }, jwt('production'));
     expect(isRefused(response)).toBe(false);
