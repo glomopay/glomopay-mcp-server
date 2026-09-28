@@ -2,10 +2,12 @@ import { CallToolResult, ServerRequest, ServerNotification } from '@modelcontext
 import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { ZodRawShape } from 'zod';
 
+import type { TToolName } from './tool-names';
+
 export type TToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
 export interface IToolConfig {
-  name: string;
+  name: TToolName;
   title?: string;
   description?: string;
   inputSchema?: ZodRawShape;

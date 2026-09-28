@@ -7,6 +7,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig, AxiosError } from '
 import { ZodSchema } from 'zod';
 
 import { convertToCamelCase, convertToSnakeCase } from '@/shared/case-converter/case-converter.module';
+import { logger } from '@/shared/logger/logger.module';
 
 /**
  * Custom error class for API errors.
@@ -15,13 +16,24 @@ import { convertToCamelCase, convertToSnakeCase } from '@/shared/case-converter/
 export class ApiError extends Error {
   public statusCode?: number;
   public data?: unknown;
+  /** Transport error code (e.g. ETIMEDOUT) when no response arrived. */
+  public code?: string;
+  public headers?: Record<string, unknown>;
 
-  constructor(message: string, statusCode?: number, data?: unknown) {
+  constructor(message: string, statusCode?: number, data?: unknown, meta: { code?: string; headers?: Record<string, unknown> } = {}) {
     super(message);
     this.name = 'ApiError';
     this.statusCode = statusCode;
     this.data = data;
+    this.code = meta.code;
+    this.headers = meta.headers;
   }
+}
+
+export interface IApiResponse {
+  status: number;
+  headers: Record<string, unknown>;
+  data: unknown;
 }
 
 export type THttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -72,10 +84,10 @@ export class ApiClient {
           // Invoke custom error handler for the status code, if available.
           if (this.customErrorHandlers[statusCode]) this.customErrorHandlers[statusCode](error);
 
-          return Promise.reject(new ApiError(message, statusCode, errorData));
+          return Promise.reject(new ApiError(message, statusCode, errorData, { headers: { ...error.response.headers } }));
         } else {
-          console.error(`[ApiClient] Network/Unknown Error: ${error.message}`);
-          return Promise.reject(new ApiError(error.message, undefined, undefined));
+          logger.error('glomo API network error', { component: 'api-client', transportErrorCode: error.code, message: error.message });
+          return Promise.reject(new ApiError(error.message, undefined, undefined, { code: error.code }));
         }
       },
     );
@@ -105,18 +117,31 @@ export class ApiClient {
    * @returns The validated response data.
    */
   async request(method: THttpMethod, url: string, body?: unknown, schema?: TZodSchemaParam, config: AxiosRequestConfig = {}) {
+    const { data } = await this.requestWithResponse(method, url, body, schema, config);
+    return data;
+  }
+
+  /** Like `request`, but also returns the HTTP status and response headers. */
+  async requestWithResponse(
+    method: THttpMethod,
+    url: string,
+    body?: unknown,
+    schema?: TZodSchemaParam,
+    config: AxiosRequestConfig = {},
+  ): Promise<IApiResponse> {
     if (this.enableCaseConversion) {
       if (body && typeof body === 'object') body = convertToSnakeCase(body);
       if (config.params && typeof config.params === 'object') config.params = convertToSnakeCase(config.params);
     }
-    let { data } = await this.axiosInstance.request({
+    const response = await this.axiosInstance.request({
       method,
       url,
       data: body,
       ...config,
     });
+    let data = response.data;
     data = this.enableCaseConversion && typeof data === 'object' ? convertToCamelCase(data) : data;
-    return schema ? this.validateResponse(data, schema) : data;
+    return { status: response.status, headers: { ...response.headers }, data: schema ? this.validateResponse(data, schema) : data };
   }
 
   async get(url: string, params?: Record<string, unknown>, schema?: TZodSchemaParam, config: AxiosRequestConfig = {}) {

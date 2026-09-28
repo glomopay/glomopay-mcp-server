@@ -2,6 +2,7 @@ import { z, ZodRawShape } from 'zod';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types';
 
 import { BaseTool, IToolConfig } from '@/shared/tool/tool.module';
+import { reportToolCall } from '@/core/telemetry/telemetry.module';
 import { ApiCatalog } from '@/core/catalog/catalog.module';
 import { buildSampleRequest, renderSample, type TSampleLanguage } from '@/core/sample/sample.module';
 
@@ -36,7 +37,11 @@ export class SampleRequestTool extends BaseTool {
   execute(args: ZodRawShape): CallToolResult {
     const { operationId, language } = args as unknown as TArgs;
     const entry = this.catalog.details(operationId);
-    if ('error' in entry) return errorResult(entry.error);
+    if ('error' in entry) {
+      reportToolCall({ errorCode: 'unknown_operation' });
+      return errorResult(entry.error);
+    }
+    reportToolCall({ operationId });
 
     const request = buildSampleRequest(entry, this.catalog.origin);
     const snippet = renderSample(request, language ?? 'curl');

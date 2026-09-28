@@ -1,6 +1,9 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { Server } from 'node:http';
+import { sign, type KeyObject } from 'node:crypto';
+import { createServer as createHttpServer } from 'node:http';
+import { createServer, type AddressInfo, type Socket } from 'node:net';
 
 import nock from 'nock';
 
@@ -36,16 +39,38 @@ export interface ITestServerOptions {
   docsCorpusPath?: string;
   authPublicKey?: string;
   authAudience?: string;
+  apiHost?: string;
+  downstreamTimeoutMs?: number;
+  analyticsTimeoutMs?: number;
+  /** Environment the app is created under; restored afterwards. */
+  env?: Record<string, string | undefined>;
+}
+
+function withEnv<T>(env: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
+  const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  const apply = (values: Record<string, string | undefined>) => {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+  apply(env);
+  return run().finally(() => apply(previous));
 }
 
 export async function startTestServer(options: ITestServerOptions = {}): Promise<ITestServer> {
-  const app = await createApp({
-    specPath: options.specPath ?? FIXTURE_SPEC,
-    apiHost: API_BASE,
-    docsCorpusPath: options.docsCorpusPath,
-    authPublicKey: 'authPublicKey' in options ? options.authPublicKey : AUTH_PUBLIC_KEY,
-    authAudience: 'authAudience' in options ? options.authAudience : AUTH_AUDIENCE,
-  });
+  const app = await withEnv(options.env ?? {}, () =>
+    createApp({
+      specPath: options.specPath ?? FIXTURE_SPEC,
+      apiHost: options.apiHost ?? API_BASE,
+      docsCorpusPath: options.docsCorpusPath,
+      authPublicKey: 'authPublicKey' in options ? options.authPublicKey : AUTH_PUBLIC_KEY,
+      authAudience: 'authAudience' in options ? options.authAudience : AUTH_AUDIENCE,
+      analyticsFlushIntervalMs: 5,
+      downstreamTimeoutMs: options.downstreamTimeoutMs,
+      analyticsTimeoutMs: options.analyticsTimeoutMs,
+    }),
+  );
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, () => resolve(listening));
   });
@@ -144,22 +169,191 @@ export interface IToolResponse {
   error?: { code: number; message: string };
 }
 
-export async function callTool(url: string, name: string, args: unknown, bearer?: string): Promise<IToolResponse> {
+async function rpc(url: string, method: string, params: unknown, bearer?: string, extraHeaders: Record<string, string> = {}): Promise<IToolResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
+    ...extraHeaders,
   };
   if (bearer !== undefined) headers.Authorization = `Bearer ${bearer}`;
 
   const response = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
 
   const text = await response.text();
   const line = text.split('\n').find((entry) => entry.startsWith('data:'));
   return JSON.parse((line ?? text).replace(/^data:\s*/, ''));
+}
+
+export function callTool(url: string, name: string, args: unknown, bearer?: string, headers?: Record<string, string>): Promise<IToolResponse> {
+  return rpc(url, 'tools/call', { name, arguments: args }, bearer, headers);
+}
+
+export function initialize(url: string, clientInfo: unknown, bearer: string, headers?: Record<string, string>): Promise<IToolResponse> {
+  return rpc(
+    url,
+    'initialize',
+    { protocolVersion: '2025-06-18', capabilities: {}, ...(clientInfo === undefined ? {} : { clientInfo }) },
+    bearer,
+    headers,
+  );
+}
+
+/** An RS256 JWT signed with the given key, e.g. a foreign key the server must not accept. */
+export function signApiKey(
+  claims: Record<string, unknown>,
+  privateKey: KeyObject,
+  header: Record<string, unknown> = { alg: 'RS256', typ: 'JWT' },
+): string {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const signingInput = `${encode(header)}.${encode(claims)}`;
+  return `${signingInput}.${sign('RSA-SHA256', Buffer.from(signingInput), privateKey).toString('base64url')}`;
+}
+
+export const MIXPANEL_API = 'https://api.mixpanel.com';
+
+export interface IMixpanelEvent {
+  event: string;
+  properties: Record<string, unknown>;
+}
+
+export interface IMixpanelCapture {
+  events: IMixpanelEvent[];
+  /** The raw request bodies and query strings, for asserting nothing leaks. */
+  requests: { query: URLSearchParams; body: string }[];
+  scope: nock.Scope;
+  waitFor: (count: number, timeoutMs?: number) => Promise<IMixpanelEvent[]>;
+}
+
+/**
+ * Intercepts Mixpanel's ingestion endpoint and decodes what the server sends.
+ * Never record a cassette against Mixpanel: it would write to the real project.
+ */
+export function captureMixpanel(reply: { status?: number; body?: string } = {}): IMixpanelCapture {
+  const events: IMixpanelEvent[] = [];
+  const requests: { query: URLSearchParams; body: string }[] = [];
+
+  const scope = nock(MIXPANEL_API)
+    .persist()
+    .post('/track')
+    .query(true)
+    .reply((uri, body) => {
+      const raw = String(body);
+      requests.push({ query: new URL(uri, MIXPANEL_API).searchParams, body: raw });
+      const data = new URLSearchParams(raw).get('data') ?? '';
+      events.push(...(JSON.parse(Buffer.from(data, 'base64').toString('utf8')) as IMixpanelEvent[]));
+      return [reply.status ?? 200, reply.body ?? '1'];
+    });
+
+  const waitFor = async (count: number, timeoutMs = 2000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (events.length < count && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+    return events;
+  };
+
+  return { events, requests, scope, waitFor };
+}
+
+export interface IUpstreamRequest {
+  method: string;
+  path: string;
+  body: string;
+}
+
+export interface IFakeUpstream {
+  origin: string;
+  /** Connections accepted so far, and the most that were open at once. */
+  stats: { connections: number; open: number; maxOpen: number; answered: number };
+  requests: IUpstreamRequest[];
+  close: () => Promise<void>;
+}
+
+export const UPSTREAM_REQUEST_ID = 'req_7f3c2a1b';
+
+/** Records the request line of each HTTP request a raw socket receives (body chunks are skipped). */
+function recordRawRequest(requests: IUpstreamRequest[], chunk: string): void {
+  const [method, path] = chunk.split('\r\n')[0].split(' ');
+  if (/^[A-Z]+$/.test(method ?? '') && path?.startsWith('/')) requests.push({ method, path, body: '' });
+}
+
+/**
+ * A real local endpoint standing in for a misbehaving or specific upstream:
+ * - `silent` accepts connections, records each request line, and never answers;
+ * - `reset` drops each connection as soon as it opens;
+ * - `status` answers over HTTP with the status named in the path (`..._status_503`),
+ *   otherwise 200 (GET) or 201, after `delayMs`, with an `x-request-id` header and `body`
+ *   (a string as-is, anything else as JSON).
+ */
+export async function startBrokenUpstream(
+  behaviour: 'silent' | 'reset' | 'status',
+  options: { body?: unknown; delayMs?: number } = {},
+): Promise<IFakeUpstream> {
+  const sockets = new Set<Socket>();
+  const stats = { connections: 0, open: 0, maxOpen: 0, answered: 0 };
+  const requests: IUpstreamRequest[] = [];
+
+  const track = (socket: Socket) => {
+    sockets.add(socket);
+    stats.connections += 1;
+    stats.open += 1;
+    stats.maxOpen = Math.max(stats.maxOpen, stats.open);
+    socket.on('close', () => {
+      sockets.delete(socket);
+      stats.open -= 1;
+    });
+  };
+
+  const upstream =
+    behaviour === 'status'
+      ? createHttpServer((req, res) => {
+          let body = '';
+          req.on('data', (chunk) => (body += chunk));
+          req.on('end', () => {
+            requests.push({ method: req.method ?? '', path: req.url ?? '', body });
+            const named = /_status_(\d{3})/.exec(req.url ?? '');
+            const status = named ? Number(named[1]) : req.method === 'GET' ? 200 : 201;
+            setTimeout(() => {
+              const text = typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {});
+              res.writeHead(status, { 'content-type': 'application/json', 'x-request-id': UPSTREAM_REQUEST_ID });
+              res.end(text, () => (stats.answered += 1));
+            }, options.delayMs ?? 0);
+          });
+        })
+      : createServer((socket) => {
+          if (behaviour === 'reset') socket.resetAndDestroy();
+          else socket.on('data', (chunk) => recordRawRequest(requests, String(chunk)));
+        });
+  upstream.on('connection', track);
+
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const { port } = upstream.address() as AddressInfo;
+  return {
+    origin: `http://127.0.0.1:${port}`,
+    stats,
+    requests,
+    close: () =>
+      new Promise((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        upstream.close(() => resolve());
+      }),
+  };
+}
+
+/** Sends several JSON-RPC requests in one POST and waits for the whole reply. */
+export async function rpcBatch(url: string, messages: { method: string; params: unknown }[], bearer: string): Promise<string> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${bearer}` },
+    body: JSON.stringify(messages.map((message, index) => ({ jsonrpc: '2.0', id: index + 1, ...message }))),
+  });
+  return response.text();
+}
+
+export function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function resultText(response: IToolResponse): string {

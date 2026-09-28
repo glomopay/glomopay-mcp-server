@@ -94,6 +94,42 @@ closed (every credential is rejected); discovery still works.
 `API_HOST` is the origin only — the versioned base path (`/api/v1`, `/api/v2`) is
 resolved per operation from the spec.
 
+### Telemetry
+
+All telemetry is off unless configured, so local runs, CI and tests send nothing.
+
+| Variable                      | Default            | Description                                                                                                                      |
+| ----------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `MIXPANEL_TOKEN`              | —                  | Mixpanel project token. Unset: product analytics is a no-op.                                                                     |
+| `MIXPANEL_HOST`               | `api.mixpanel.com` | Mixpanel ingestion host (or full origin), e.g. for a regional data-residency endpoint.                                           |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | —                  | OTLP/HTTP collector base URL. Unset: OpenTelemetry is not started.                                                               |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | —                  | Headers sent with every OTLP export, e.g. `authorization=Bearer <token>`.                                                        |
+| `OTEL_METRICS_EXPORTER`       | `otlp`             | `otlp` exports metrics with traces and logs; `none` turns metrics export off. Other values are unsupported and also turn it off. |
+| `DEPLOYMENT_ENVIRONMENT`      | —                  | Sets the `deployment.environment` resource attribute on every span, metric and log, e.g. `production`, `sandbox`.                |
+
+- **Product analytics (Mixpanel).** `mcp_session_submitted` on `initialize`, `mcp_tool_submitted` on every
+  `tools/call` (`status` = `success`/`failed`), and `mcp_tool_failed` with an `error_code` when a call fails:
+  `validation_error`, `unknown_operation`, `auth_missing`, `auth_invalid` (the credential failed verification),
+  `auth_rejected` (the API answered 401/403), `sandbox_only` (a read or write with a credential whose `env` is
+  not `sandbox`), `upstream_4xx`, `upstream_5xx`, `timeout` or `internal`.
+  Events are batched and fire-and-forget over the `/track` endpoint, with at most 4 requests in flight, a
+  10 s timeout per request and a bounded queue; anything undeliverable is counted in `mcp.analytics.dropped`.
+  A Mixpanel failure never affects a tool response, and IP geolocation is off. `distinct_id`/`merchant_id`
+  and `environment`/`mode` come only from a credential that passed `CredentialVerifier` (its `sub` and `env`):
+  the dispatcher's own verification for execution calls, the same verifier for `initialize`, discovery tools and
+  calls refused before dispatch. With no credential, or one that fails verification, the event is sent
+  anonymously (empty `distinct_id`, no `merchant_id`, `environment` or `mode`). The only tool inputs sent are
+  `operation_id` and redacted search text (`search_query`, from `glomo_api_search`, `glomo_docs_search` and the
+  `glomo_implementation_planner` goal); arguments, bodies and tokens are never sent. Accepted residual risk:
+  the redactor masks structured values (emails, UPI IDs, phone, card, Aadhaar and PAN numbers, digit runs of
+  9 or more, keys and tokens) but not personal names or IDs shorter than 9 digits, so free text such as "refund to Jane Doe" can reach `search_query`.
+- **Traces, metrics and logs (OpenTelemetry, `service.name` = `glomo-mcp-server`).** One span per
+  `tools/call` with a child span for the downstream API call, whose URL is recorded as the operation's path
+  template (never the concrete path or query). Incoming HTTP requests are not traced. `mcp.tool.calls`,
+  `mcp.tool.duration` and `mcp.analytics.dropped` metrics; JSON logs on stdout carrying the trace context, also
+  exported over OTLP. Each `glomo_api_write` call writes one audit log line (merchant, operation, HTTP status and
+  the downstream request ID; never bodies). The span's `mcpRequestId` equals the Mixpanel `mcp_request_id`.
+
 ## Development
 
 Prerequisites: Node.js 22+, pnpm 10.10.0.

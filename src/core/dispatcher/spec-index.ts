@@ -2,6 +2,7 @@ import SwaggerParser from '@apidevtools/swagger-parser';
 import { OpenAPIV3 } from 'openapi-types';
 
 import { THttpMethod } from '@/shared/api-client/api-client.module';
+import { logger } from '@/shared/logger/logger.module';
 
 export interface ISpecOperation {
   operationId: string;
@@ -25,7 +26,7 @@ const VERSION_SEGMENT = /^\/v\d+\//;
 function parseServerPath(document: OpenAPIV3.Document): { prefix: string; defaultVersion: string } {
   const serverUrl = document.servers?.[0]?.url;
   if (!serverUrl) {
-    console.error('[spec-index] spec declares no servers; defaulting base path to /api and version v1');
+    logger.warn('spec declares no servers; defaulting base path to /api and version v1', { component: 'spec-index' });
     return { prefix: '/api', defaultVersion: 'v1' };
   }
 

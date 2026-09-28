@@ -2,6 +2,7 @@ import { z, ZodRawShape } from 'zod';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types';
 
 import { BaseTool, IToolConfig } from '@/shared/tool/tool.module';
+import { reportToolCall } from '@/core/telemetry/telemetry.module';
 
 type TArgs = { goal: string };
 
@@ -26,6 +27,7 @@ export class ImplementationPlannerTool extends BaseTool {
 
   execute(args: ZodRawShape): CallToolResult {
     const { goal } = args as unknown as TArgs;
+    reportToolCall({ searchQuery: goal });
     const payload = {
       status: 'not_available',
       goal,
