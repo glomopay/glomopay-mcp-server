@@ -10,6 +10,7 @@ export interface IVerifiedCredential {
   token: string;
   scope: TScope;
   env?: string;
+  sub?: string;
 }
 
 export type TCredentialResult = { status: 'absent' } | { status: 'invalid'; reason: string } | { status: 'valid'; credential: IVerifiedCredential };
@@ -20,9 +21,19 @@ export interface ICredentialVerifierConfig {
 }
 
 const SCOPES: readonly TScope[] = ['read', 'write', 'both'];
+const CLOCK_TOLERANCE_SECONDS = 30;
+// The credential's `iss` stays the per-merchant request host (so the gateway resolves
+// the consumer), so it can't be pinned. The MCP boundary is `aud` = the MCP audience
+// plus `purpose` = mcp; a merchant's external-API key has neither.
+const MCP_PURPOSE = 'mcp';
 
 function readToken(extra: TToolExtra): string | undefined {
   return extra.authInfo?.token;
+}
+
+// Env dashboards commonly store a PEM with literal backslash-n rather than real newlines.
+function normalizePem(pem: string): string {
+  return pem.includes('\\n') ? pem.replace(/\\n/g, '\n') : pem;
 }
 
 export class CredentialVerifier {
@@ -30,9 +41,13 @@ export class CredentialVerifier {
 
   constructor(private config: ICredentialVerifierConfig) {}
 
+  private isConfigured(): boolean {
+    return Boolean(this.config.publicKeyPem && this.config.audience);
+  }
+
   private getKey(): Promise<TVerificationKey> {
     if (!this.config.publicKeyPem) throw new Error('no public key configured');
-    if (!this.key) this.key = importSPKI(this.config.publicKeyPem, 'RS256');
+    if (!this.key) this.key = importSPKI(normalizePem(this.config.publicKeyPem), 'RS256');
     return this.key;
   }
 
@@ -40,21 +55,31 @@ export class CredentialVerifier {
     const token = readToken(extra);
     if (!token) return { status: 'absent' };
 
-    if (!this.config.publicKeyPem || !this.config.audience) {
+    if (!this.isConfigured()) {
       return { status: 'invalid', reason: 'credential verification is not configured on this server' };
     }
 
     let scope: unknown;
     let env: unknown;
+    let sub: unknown;
+    let purpose: unknown;
     try {
       const { payload } = await jwtVerify(token, await this.getKey(), {
         algorithms: ['RS256'],
         audience: this.config.audience,
+        requiredClaims: ['exp', 'iat'],
+        clockTolerance: CLOCK_TOLERANCE_SECONDS,
       });
       scope = payload.scope;
       env = payload.env;
-    } catch (error) {
-      return { status: 'invalid', reason: error instanceof Error ? error.message : 'token verification failed' };
+      sub = payload.sub;
+      purpose = payload.purpose;
+    } catch {
+      return { status: 'invalid', reason: 'invalid credential' };
+    }
+
+    if (purpose !== MCP_PURPOSE) {
+      return { status: 'invalid', reason: 'credential is not an MCP credential' };
     }
 
     if (typeof scope !== 'string' || !SCOPES.includes(scope as TScope)) {
@@ -63,7 +88,12 @@ export class CredentialVerifier {
 
     return {
       status: 'valid',
-      credential: { token, scope: scope as TScope, env: typeof env === 'string' ? env : undefined },
+      credential: {
+        token,
+        scope: scope as TScope,
+        env: typeof env === 'string' ? env : undefined,
+        sub: typeof sub === 'string' ? sub : undefined,
+      },
     };
   }
 }

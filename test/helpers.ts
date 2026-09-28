@@ -14,7 +14,8 @@ const testKeyPair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 export const TEST_PUBLIC_KEY = testKeyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 
 // The server verifies against the real glomo key in record mode; test-signed
-// tokens are only accepted in lockdown replay.
+// tokens are only accepted in lockdown replay. Re-recording execution cassettes
+// therefore needs a real MCP credential issued by glomo, not a test token.
 const AUTH_PUBLIC_KEY = process.env.GLOMO_MCP_PUBLIC_KEY ?? TEST_PUBLIC_KEY;
 const AUTH_AUDIENCE = process.env.GLOMO_MCP_AUDIENCE ?? TEST_AUDIENCE;
 
@@ -30,13 +31,20 @@ export interface ITestServer {
   close: () => Promise<void>;
 }
 
-export async function startTestServer(options: { specPath?: string; docsCorpusPath?: string } = {}): Promise<ITestServer> {
+export interface ITestServerOptions {
+  specPath?: string;
+  docsCorpusPath?: string;
+  authPublicKey?: string;
+  authAudience?: string;
+}
+
+export async function startTestServer(options: ITestServerOptions = {}): Promise<ITestServer> {
   const app = await createApp({
     specPath: options.specPath ?? FIXTURE_SPEC,
     apiHost: API_BASE,
     docsCorpusPath: options.docsCorpusPath,
-    authPublicKey: AUTH_PUBLIC_KEY,
-    authAudience: AUTH_AUDIENCE,
+    authPublicKey: 'authPublicKey' in options ? options.authPublicKey : AUTH_PUBLIC_KEY,
+    authAudience: 'authAudience' in options ? options.authAudience : AUTH_AUDIENCE,
   });
   const server: Server = await new Promise((resolve) => {
     const listening = app.listen(0, () => resolve(listening));
@@ -114,13 +122,22 @@ function b64url(value: object): string {
 export function jwtToken(env?: string, extra: Record<string, unknown> = {}): string {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'RS256', typ: 'JWT' };
-  const payload = { aud: TEST_AUDIENCE, scope: 'both', iat: now, exp: now + 3600, ...(env ? { env } : {}), ...extra };
+  const payload = { aud: TEST_AUDIENCE, purpose: 'mcp', scope: 'both', iat: now, exp: now + 3600, ...(env ? { env } : {}), ...extra };
   const signingInput = `${b64url(header)}.${b64url(payload)}`;
   const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), testKeyPair.privateKey).toString('base64url');
   return `${signingInput}.${signature}`;
 }
 
 export const jwt = jwtToken;
+
+// Sign an arbitrary header/payload with the test key, for cases jwtToken can't
+// express: a pinned-algorithm mismatch (e.g. RS512), or a missing required claim.
+export function signTestToken(payload: Record<string, unknown>, header: Record<string, unknown> = { alg: 'RS256', typ: 'JWT' }): string {
+  const digest = header.alg === 'RS512' ? 'RSA-SHA512' : 'RSA-SHA256';
+  const signingInput = `${b64url(header)}.${b64url(payload)}`;
+  const signature = crypto.sign(digest, Buffer.from(signingInput), testKeyPair.privateKey).toString('base64url');
+  return `${signingInput}.${signature}`;
+}
 
 export interface IToolResponse {
   result?: { content?: { text: string }[]; isError?: boolean };

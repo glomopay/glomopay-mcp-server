@@ -63,15 +63,17 @@ an agent can find and inspect operations before it holds a key.
 
 The execution credential is a short-lived, MCP-purpose token issued by glomo, not
 a merchant API key. When one is present as `Authorization: Bearer <token>`, the
-server verifies its RS256 signature against the configured glomo public key and
-requires its `aud` claim to equal the configured MCP audience; anything else — an
-unsigned or tampered token, the wrong algorithm, or a merchant key minted for the
-external API — is rejected before any downstream call. The token's `scope` claim
-is then enforced per tool: reads need `read` or `both`, writes need `write` or
-`both`, and writes remain sandbox-only (`env` must be `sandbox`). A request with no
-credential still reaches discovery and `tools/list`; the execution tools fail
-closed. The server holds no private key. Verification is isolated behind a single
-seam (`src/features/auth/credential-resolver.ts`).
+server verifies its RS256 signature against the configured glomo public key,
+requires its `aud` claim to equal the configured MCP audience, and requires
+`purpose` to be `mcp`; anything else — an unsigned, tampered, or expired token, the
+wrong algorithm, or a merchant key minted for the external API — is rejected before
+any downstream call. (The `iss` claim stays the per-merchant request host, so it is
+not pinned here.) The token's `scope` claim is then enforced per tool: reads need
+`read` or `both`, writes need `write` or `both`, and writes remain sandbox-only
+(`env` must be `sandbox`). A request with no credential still reaches discovery and
+`tools/list`; the execution tools fail closed. The server holds no private key.
+Verification is isolated behind a single seam
+(`src/features/auth/credential-resolver.ts`).
 
 ## Configuration
 

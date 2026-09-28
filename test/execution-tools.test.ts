@@ -10,6 +10,7 @@ import {
   jwt,
   resultText,
   SANDBOX_TOKEN,
+  signTestToken,
   startTestServer,
   TEST_AUDIENCE,
   TEST_PUBLIC_KEY,
@@ -234,7 +235,20 @@ describe('agent credential verification', () => {
     return `${input}.${crypto.sign('RSA-SHA256', Buffer.from(input), privateKey).toString('base64url')}`;
   }
 
-  const claims = () => ({ aud: TEST_AUDIENCE, scope: 'both', env: 'sandbox', iat: 0, exp: Math.floor(Date.now() / 1000) + 3600 });
+  const now = () => Math.floor(Date.now() / 1000);
+  const claims = (): Record<string, unknown> => ({
+    aud: TEST_AUDIENCE,
+    purpose: 'mcp',
+    scope: 'both',
+    env: 'sandbox',
+    iat: now(),
+    exp: now() + 3600,
+  });
+  const without = (key: string) => {
+    const copy = claims();
+    delete copy[key];
+    return copy;
+  };
 
   async function readWith(bearer: string) {
     const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
@@ -253,6 +267,12 @@ describe('agent credential verification', () => {
     const { response, called } = await readWith(jwt('sandbox', { aud: 'glomo-external-api' }));
     expect(isRefused(response)).toBe(true);
     expect(resultText(response)).toContain('Unauthorized');
+    expect(called).toBe(false);
+  });
+
+  it('refuses a token that is not marked as an MCP-purpose credential', async () => {
+    const { response, called } = await readWith(jwt('sandbox', { purpose: 'api' }));
+    expect(isRefused(response)).toBe(true);
     expect(called).toBe(false);
   });
 
@@ -275,6 +295,30 @@ describe('agent credential verification', () => {
 
   it('refuses a token signed by a key that is not the configured one', async () => {
     const { response, called } = await readWith(signRs256(foreignKey.privateKey, claims()));
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('refuses an RS512 token signed with the configured key (algorithm pin)', async () => {
+    const { response, called } = await readWith(signTestToken(claims(), { alg: 'RS512', typ: 'JWT' }));
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('refuses a token with no exp claim', async () => {
+    const { response, called } = await readWith(signTestToken(without('exp')));
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('refuses a token with no scope claim', async () => {
+    const { response, called } = await readWith(signTestToken(without('scope')));
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('refuses a token with an unrecognised scope', async () => {
+    const { response, called } = await readWith(signTestToken({ ...claims(), scope: 'read write' }));
     expect(isRefused(response)).toBe(true);
     expect(called).toBe(false);
   });
