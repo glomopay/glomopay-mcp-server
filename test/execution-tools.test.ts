@@ -219,6 +219,8 @@ describe('sandbox-only execution', () => {
   for (const [label, bearer] of [
     ['production', jwt('production')],
     ['missing env claim', jwt()],
+    ['"Sandbox" (wrong case)', jwt('Sandbox')],
+    ['"staging"', jwt('staging')],
   ] as const) {
     it(`refuses a read and a write with a ${label} credential without calling the API`, async () => {
       const readScope = nock(API_BASE).get(/.*/).reply(200, {});
