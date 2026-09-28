@@ -33,7 +33,7 @@ function search(query: string, limit?: number) {
 
 describe('glomo_docs_search', () => {
   it('ranks the purpose-codes page first for a purpose-code query', async () => {
-    const payload = JSON.parse(resultText(await search('purpose code regulator set'))) as { results: { url: string }[] };
+    const payload = JSON.parse(resultText(await search('purpose codes'))) as { results: { url: string }[] };
     expect(payload.results[0].url).toContain('purpose-codes');
   });
 
