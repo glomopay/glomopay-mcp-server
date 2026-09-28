@@ -224,6 +224,13 @@ describe('sandbox-only write guard', () => {
       expect(scope.isDone()).toBe(false);
     });
   }
+
+  it('still allows a read with a production credential', async () => {
+    const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
+    const response = await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } }, jwt('production'));
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
 });
 
 describe('agent credential verification', () => {
@@ -299,6 +306,12 @@ describe('agent credential verification', () => {
 
   it('refuses a token with no exp claim', async () => {
     const { response, called } = await readWith(signTestToken(without('exp')));
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('refuses a token with no iat claim', async () => {
+    const { response, called } = await readWith(signTestToken(without('iat')));
     expect(isRefused(response)).toBe(true);
     expect(called).toBe(false);
   });

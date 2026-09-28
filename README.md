@@ -61,7 +61,7 @@ A credential is required only for the execution tools (`glomo_api_read`,
 `glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
 an agent can find and inspect operations before it holds a key.
 
-The execution credential is a short-lived, MCP-purpose token issued by glomo, not
+The execution credential is an expiring, MCP-audience token issued by glomo, not
 a merchant API key. When one is present as `Authorization: Bearer <token>`, the
 server verifies its RS256 signature against the configured glomo public key,
 and requires its `aud` claim to equal the configured MCP audience; anything else — an
