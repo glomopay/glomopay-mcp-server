@@ -1,4 +1,4 @@
-export { DocsIndex, type IDocsResult } from './docs-index';
+export { DocsIndex, readCorpusFile, type IDocsResult } from './docs-index';
 export {
   buildCorpus,
   parseLlmsFull,

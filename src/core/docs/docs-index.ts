@@ -32,6 +32,10 @@ interface ICorpusPage {
 
 const EXCERPT_LIMIT = 1200;
 
+export function readCorpusFile(filePath: string): ICorpusPage[] {
+  return JSON.parse(readFileSync(filePath, 'utf8')) as ICorpusPage[];
+}
+
 function tokenize(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((token) => token.length >= 2 && !STOPWORDS.has(token));
 }
@@ -123,8 +127,11 @@ export class DocsIndex {
   }
 
   static fromCorpusFile(filePath: string): DocsIndex {
-    const corpus = JSON.parse(readFileSync(filePath, 'utf8')) as ICorpusPage[];
-    return new DocsIndex(corpus.flatMap(chunkPage));
+    return DocsIndex.fromPages(readCorpusFile(filePath));
+  }
+
+  static fromPages(pages: ICorpusPage[]): DocsIndex {
+    return new DocsIndex(pages.flatMap(chunkPage));
   }
 
   get size(): number {

@@ -22,6 +22,9 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 - Versioned URLs (`spec-index.ts`): the spec server is `/api/v1` but v2 ops are written `/v2/...`, and the
   service mounts `/api/v1` and `/api/v2` as siblings. `API_HOST` is the origin only and each op's full path
   is resolved in the index. Naive concatenation gives `/api/v1/v2/...`.
+- `glomo_implementation_planner` returns authored flows only, parsed from the docs Get started page
+  (`src/core/planner/flow-guide.ts`). Never derive a call order from the spec. The step format is closed: a
+  step that matches neither form, or names an operation the spec doesn't have, fails `pnpm build`.
 - `CredentialVerifier` (`src/features/auth/credential-resolver.ts`) is the only place credentials are read.
   It verifies the agent credential (RS256 signature against the configured public key, `aud` = MCP audience,
   `exp`/`iat` required) and returns its `env`/`sub`; the dispatcher enforces the sandbox rule. The public
