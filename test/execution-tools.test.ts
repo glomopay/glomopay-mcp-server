@@ -238,8 +238,6 @@ describe('agent credential verification', () => {
   const now = () => Math.floor(Date.now() / 1000);
   const claims = (): Record<string, unknown> => ({
     aud: TEST_AUDIENCE,
-    purpose: 'mcp',
-    scope: 'both',
     env: 'sandbox',
     iat: now(),
     exp: now() + 3600,
@@ -270,22 +268,10 @@ describe('agent credential verification', () => {
     expect(called).toBe(false);
   });
 
-  it('refuses a token that is not marked as an MCP-purpose credential', async () => {
-    const { response, called } = await readWith(jwt('sandbox', { purpose: 'api' }));
-    expect(isRefused(response)).toBe(true);
-    expect(called).toBe(false);
-  });
-
-  it('refuses a token with no purpose claim', async () => {
-    const { response, called } = await readWith(signTestToken(without('purpose')));
-    expect(isRefused(response)).toBe(true);
-    expect(called).toBe(false);
-  });
-
   it('refuses a tampered token', async () => {
     const [header, payload, signature] = jwt('sandbox').split('.');
     const forged = JSON.parse(Buffer.from(payload, 'base64url').toString());
-    const tampered = `${header}.${b64url({ ...forged, scope: 'both', injected: true })}.${signature}`;
+    const tampered = `${header}.${b64url({ ...forged, sub: 'another-merchant', injected: true })}.${signature}`;
     const { response, called } = await readWith(tampered);
     expect(isRefused(response)).toBe(true);
     expect(called).toBe(false);
@@ -317,60 +303,19 @@ describe('agent credential verification', () => {
     expect(called).toBe(false);
   });
 
-  it('refuses a token with no scope claim', async () => {
-    const { response, called } = await readWith(signTestToken(without('scope')));
-    expect(isRefused(response)).toBe(true);
-    expect(called).toBe(false);
-  });
-
-  it('refuses a token with an unrecognised scope', async () => {
-    const { response, called } = await readWith(signTestToken({ ...claims(), scope: 'read write' }));
-    expect(isRefused(response)).toBe(true);
-    expect(called).toBe(false);
-  });
-
-  it('blocks a read-only credential on a write tool without calling the API', async () => {
-    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
-    const response = await callTool(
+  it('allows both a read and a sandbox write with a credential that carries no scope or purpose claim', async () => {
+    const { response: readResponse, called: readCalled } = await readWith(signTestToken(claims()));
+    const write = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+    const writeResponse = await callTool(
       server.url,
       'glomo_api_write',
       { operationId: 'createCustomer', params: CUSTOMER_BODY },
-      jwt('sandbox', { scope: 'read' }),
+      signTestToken(claims()),
     );
-    expect(isRefused(response)).toBe(true);
-    expect(resultText(response)).toContain('scope');
-    expect(scope.isDone()).toBe(false);
-  });
-
-  it('blocks a write-only credential on a read tool without calling the API', async () => {
-    const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
-    const response = await callTool(
-      server.url,
-      'glomo_api_read',
-      { operationId: 'getPayoutById', params: { id: 'pay_1' } },
-      jwt('sandbox', { scope: 'write' }),
-    );
-    expect(isRefused(response)).toBe(true);
-    expect(resultText(response)).toContain('scope');
-    expect(scope.isDone()).toBe(false);
-  });
-
-  it('allows a read with a read-only credential', async () => {
-    const { response, called } = await readWith(jwt('sandbox', { scope: 'read' }));
-    expect(isRefused(response)).toBe(false);
-    expect(called).toBe(true);
-  });
-
-  it('allows a write with a write-only sandbox credential', async () => {
-    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
-    const response = await callTool(
-      server.url,
-      'glomo_api_write',
-      { operationId: 'createCustomer', params: CUSTOMER_BODY },
-      jwt('sandbox', { scope: 'write' }),
-    );
-    expect(isRefused(response)).toBe(false);
-    expect(scope.isDone()).toBe(true);
+    expect(isRefused(readResponse)).toBe(false);
+    expect(readCalled).toBe(true);
+    expect(isRefused(writeResponse)).toBe(false);
+    expect(write.isDone()).toBe(true);
   });
 });
 

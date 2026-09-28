@@ -2,7 +2,7 @@ import { CallToolResult } from '@modelcontextprotocol/sdk/types';
 
 import { TToolExtra } from '@/shared/tool/tool.module';
 import { ApiClient, ApiError, THttpMethod } from '@/shared/api-client/api-client.module';
-import { CredentialVerifier, scopePermits } from '@/features/auth/auth.module';
+import { CredentialVerifier } from '@/features/auth/auth.module';
 
 import { TSpecIndex } from './spec-index';
 
@@ -48,12 +48,8 @@ export class Dispatcher {
       return errorResult(`Unauthorized: ${credential.reason}.`);
     }
 
-    const { token: secret, scope, env } = credential.credential;
+    const { token: secret, env } = credential.credential;
     const isWrite = operation.method !== 'GET';
-
-    if (!scopePermits(scope, isWrite ? 'write' : 'read')) {
-      return errorResult(`Forbidden: this credential's scope "${scope}" does not permit ${isWrite ? 'write' : 'read'} operations.`);
-    }
 
     if (isWrite && env !== 'sandbox') {
       return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and require a sandbox credential.`);

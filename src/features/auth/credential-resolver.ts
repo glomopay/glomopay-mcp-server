@@ -4,11 +4,8 @@ import { TToolExtra } from '@/shared/tool/tool.module';
 
 type TVerificationKey = Awaited<ReturnType<typeof importSPKI>>;
 
-export type TScope = 'read' | 'write' | 'both';
-
 export interface IVerifiedCredential {
   token: string;
-  scope: TScope;
   env?: string;
   sub?: string;
 }
@@ -20,11 +17,9 @@ export interface ICredentialVerifierConfig {
   audience?: string;
 }
 
-const SCOPES: readonly TScope[] = ['read', 'write', 'both'];
 const CLOCK_TOLERANCE_SECONDS = 30;
-// `iss` is not checked: `aud` = the MCP audience plus `purpose` = mcp identify the
-// credential, and a merchant's external-API key has neither.
-const MCP_PURPOSE = 'mcp';
+// `iss` is not checked: `aud` = the MCP audience alone identifies the credential,
+// and a merchant's external-API key carries the external-API audience instead.
 
 function readToken(extra: TToolExtra): string | undefined {
   return extra.authInfo?.token;
@@ -58,10 +53,8 @@ export class CredentialVerifier {
       return { status: 'invalid', reason: 'credential verification is not configured on this server' };
     }
 
-    let scope: unknown;
     let env: unknown;
     let sub: unknown;
-    let purpose: unknown;
     try {
       const { payload } = await jwtVerify(token, await this.getKey(), {
         algorithms: ['RS256'],
@@ -69,34 +62,19 @@ export class CredentialVerifier {
         requiredClaims: ['exp', 'iat'],
         clockTolerance: CLOCK_TOLERANCE_SECONDS,
       });
-      scope = payload.scope;
       env = payload.env;
       sub = payload.sub;
-      purpose = payload.purpose;
     } catch {
       return { status: 'invalid', reason: 'invalid credential' };
-    }
-
-    if (purpose !== MCP_PURPOSE) {
-      return { status: 'invalid', reason: 'credential is not an MCP credential' };
-    }
-
-    if (typeof scope !== 'string' || !SCOPES.includes(scope as TScope)) {
-      return { status: 'invalid', reason: 'credential has no valid scope claim' };
     }
 
     return {
       status: 'valid',
       credential: {
         token,
-        scope: scope as TScope,
         env: typeof env === 'string' ? env : undefined,
         sub: typeof sub === 'string' ? sub : undefined,
       },
     };
   }
-}
-
-export function scopePermits(scope: TScope, needed: 'read' | 'write'): boolean {
-  return scope === 'both' || scope === needed;
 }

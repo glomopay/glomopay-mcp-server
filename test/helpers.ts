@@ -116,13 +116,13 @@ function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-// Sign an MCP-purpose credential the way glomo will: RS256, aud = the MCP
-// audience, scope defaulting to full access. Callers override any claim via
-// `extra` (e.g. a wrong aud, a read-only scope, a foreign key).
+// Sign an MCP credential the way glomo will: RS256, aud = the MCP audience, no
+// scope or purpose claim (every credential is read_write for now). Callers override
+// any claim via `extra` (e.g. a wrong aud, a foreign key).
 export function jwtToken(env?: string, extra: Record<string, unknown> = {}): string {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'RS256', typ: 'JWT' };
-  const payload = { aud: TEST_AUDIENCE, purpose: 'mcp', scope: 'both', iat: now, exp: now + 3600, ...(env ? { env } : {}), ...extra };
+  const payload = { aud: TEST_AUDIENCE, iat: now, exp: now + 3600, ...(env ? { env } : {}), ...extra };
   const signingInput = `${b64url(header)}.${b64url(payload)}`;
   const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), testKeyPair.privateKey).toString('base64url');
   return `${signingInput}.${signature}`;
