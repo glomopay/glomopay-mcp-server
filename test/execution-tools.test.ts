@@ -204,27 +204,33 @@ describe('allowlist and read/write split', () => {
   });
 });
 
-// Env is restricted where MCP credentials are issued, not here; a server-side env
-// check would be bypassed by calling the API directly with the same credential.
-describe('credential env is not gated by the server', () => {
+describe('sandbox-only execution', () => {
+  const read = (bearer: string) => callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } }, bearer);
+  const write = (bearer: string) => callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, bearer);
+
+  it('allows a read and a write with a sandbox credential', async () => {
+    const readScope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
+    const writeScope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+    expect(isRefused(await read(jwt('sandbox')))).toBe(false);
+    expect(isRefused(await write(jwt('sandbox')))).toBe(false);
+    expect(readScope.isDone() && writeScope.isDone()).toBe(true);
+  });
+
   for (const [label, bearer] of [
-    ['sandbox', jwt('sandbox')],
     ['production', jwt('production')],
+    ['missing env claim', jwt()],
   ] as const) {
-    it(`allows a write with a ${label} credential`, async () => {
-      const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
-      const response = await callTool(server.url, 'glomo_api_write', { operationId: 'createCustomer', params: CUSTOMER_BODY }, bearer);
-      expect(isRefused(response)).toBe(false);
-      expect(scope.isDone()).toBe(true);
+    it(`refuses a read and a write with a ${label} credential without calling the API`, async () => {
+      const readScope = nock(API_BASE).get(/.*/).reply(200, {});
+      const writeScope = nock(API_BASE).post(/.*/).reply(201, {});
+      const readResponse = await read(bearer);
+      const writeResponse = await write(bearer);
+      expect(isRefused(readResponse) && isRefused(writeResponse)).toBe(true);
+      expect(resultText(readResponse)).toContain('sandbox-only');
+      expect(resultText(writeResponse)).toContain('sandbox-only');
+      expect(readScope.isDone() || writeScope.isDone()).toBe(false);
     });
   }
-
-  it('allows a read with a production credential', async () => {
-    const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
-    const response = await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } }, jwt('production'));
-    expect(isRefused(response)).toBe(false);
-    expect(scope.isDone()).toBe(true);
-  });
 });
 
 describe('agent credential verification', () => {

@@ -6,6 +6,7 @@ type TVerificationKey = Awaited<ReturnType<typeof importSPKI>>;
 
 export interface IVerifiedCredential {
   token: string;
+  env?: string;
   sub?: string;
 }
 
@@ -52,6 +53,7 @@ export class CredentialVerifier {
       return { status: 'invalid', reason: 'credential verification is not configured on this server' };
     }
 
+    let env: unknown;
     let sub: unknown;
     try {
       const { payload } = await jwtVerify(token, await this.getKey(), {
@@ -60,6 +62,7 @@ export class CredentialVerifier {
         requiredClaims: ['exp', 'iat'],
         clockTolerance: CLOCK_TOLERANCE_SECONDS,
       });
+      env = payload.env;
       sub = payload.sub;
     } catch {
       return { status: 'invalid', reason: 'invalid credential' };
@@ -69,6 +72,7 @@ export class CredentialVerifier {
       status: 'valid',
       credential: {
         token,
+        env: typeof env === 'string' ? env : undefined,
         sub: typeof sub === 'string' ? sub : undefined,
       },
     };

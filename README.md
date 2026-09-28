@@ -68,10 +68,10 @@ and requires its `aud` claim to equal the configured MCP audience; anything else
 unsigned, tampered, or expired token, the wrong algorithm, or a merchant key minted
 for the external API — is rejected before any downstream call. (`iss` is not checked;
 `aud` alone identifies the credential.) Every credential currently grants both reads
-and writes — there is no `scope` claim yet — and the server does not gate on `env`:
-glomo restricts which environments MCP credentials are issued for. A request with no
-credential still reaches discovery and
-`tools/list`; the execution tools fail closed. The server holds no private key.
+and writes — there is no `scope` claim yet — and both execution tools are
+sandbox-only: the credential's `env` claim must be exactly `sandbox`, or the call is
+refused before any downstream request. A request with no credential still reaches
+discovery and `tools/list`; the execution tools fail closed. The server holds no private key.
 Verification is isolated behind a single seam
 (`src/features/auth/credential-resolver.ts`).
 
@@ -124,6 +124,9 @@ Deployed as a web service on Render, auto-deploying from `main`. See
 `render.yaml`. `API_HOST` is set in the Render dashboard (`sync: false`).
 
 ## Security
+
+Execution tools are sandbox-only and fail closed: the credential's `env` claim must
+be exactly `sandbox`.
 
 See [SECURITY.md](./SECURITY.md) for how to report vulnerabilities. Do not commit
 secrets, API keys, or JWTs to this repository.
