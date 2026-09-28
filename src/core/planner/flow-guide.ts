@@ -1,4 +1,4 @@
-import { DOCS_ORIGIN, type ICorpusPage } from '@/core/docs/docs.module';
+import { buildCorpus, DOCS_ORIGIN, type ICorpusPage } from '@/core/docs/docs.module';
 
 export const FLOW_GUIDE_URL = `${DOCS_ORIGIN}/get-started`;
 
@@ -74,8 +74,16 @@ export function parseFlowGuide(content: string, source: string = FLOW_GUIDE_URL)
 
   const closeSection = () => {
     closeVariant();
+    if (section && section.variants.length === 0) {
+      const stepLike = section.intro.find((line) => {
+        const body = line.replace(NUMBERED, '$2');
+        return FULL_GUIDE.test(line) || API_STEP.test(body) || NOT_API_STEP.test(body);
+      });
+      if (stepLike) throw new FlowFormatError(`"${section.title}" has steps but no ### variant: ${stepLike}`);
+    }
     if (section && section.variants.length > 0) {
       const id = slugify(section.title);
+      if (flows.some((flow) => flow.id === id)) throw new FlowFormatError(`"${section.title}" has the same id as an earlier flow: ${id}`);
       flows.push({
         id,
         title: section.title,
@@ -141,6 +149,7 @@ export function parseFlowGuide(content: string, source: string = FLOW_GUIDE_URL)
 
   if (!inFlows) throw new FlowFormatError(`no "## ${FLOWS_HEADING}" section in ${source}`);
   if (flows.length === 0) throw new FlowFormatError(`no flows found in ${source}`);
+  if (!sharedNotes) throw new FlowFormatError(`no "Shared calls:" line under "## ${FLOWS_HEADING}" in ${source}`);
   return { source, sharedNotes, flows };
 }
 
@@ -172,4 +181,25 @@ export function findFlowProblems(guide: IFlowGuide, operations: ReadonlyMap<stri
     }
   }
   return problems;
+}
+
+const SPEC_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
+
+export function specOperations(document: { paths?: Record<string, Record<string, unknown> | undefined> }): Map<string, ISpecOperation> {
+  const operations = new Map<string, ISpecOperation>();
+  for (const [rawPath, pathItem] of Object.entries(document.paths ?? {})) {
+    for (const [method, operation] of Object.entries(pathItem ?? {})) {
+      const operationId = (operation as { operationId?: unknown } | undefined)?.operationId;
+      if (SPEC_METHODS.has(method) && typeof operationId === 'string') operations.set(operationId, { method: method.toUpperCase(), path: rawPath });
+    }
+  }
+  return operations;
+}
+
+export async function buildCheckedCorpus(operations: ReadonlyMap<string, ISpecOperation>): Promise<{ corpus: ICorpusPage[]; guide: IFlowGuide }> {
+  const corpus = await buildCorpus();
+  const guide = flowGuideFromCorpus(corpus);
+  const problems = findFlowProblems(guide, operations);
+  if (problems.length > 0) throw new FlowFormatError(`authored flows do not match the spec:\n  ${problems.join('\n  ')}`);
+  return { corpus, guide };
 }

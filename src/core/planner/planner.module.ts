@@ -2,6 +2,8 @@ export {
   parseFlowGuide,
   flowGuideFromCorpus,
   findFlowProblems,
+  specOperations,
+  buildCheckedCorpus,
   FlowFormatError,
   FLOW_GUIDE_URL,
   type IFlowGuide,

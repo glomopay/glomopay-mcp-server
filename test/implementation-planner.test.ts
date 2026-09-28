@@ -5,7 +5,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import nock from 'nock';
 
 import { buildCorpus, type ICorpusPage } from '@/core/docs/docs.module';
-import { findFlowProblems, flowGuideFromCorpus, FLOW_GUIDE_URL, type ISpecOperation } from '@/core/planner/planner.module';
+import {
+  buildCheckedCorpus,
+  findFlowProblems,
+  flowGuideFromCorpus,
+  FLOW_GUIDE_URL,
+  specOperations,
+  type ISpecOperation,
+} from '@/core/planner/planner.module';
 import { callTool, isRefused, resultText, startTestServer, withCassette, type ITestServer, type IToolResponse } from './helpers';
 
 const DISCOVERY_SPEC = path.resolve(__dirname, 'fixtures/openapi-discovery.json');
@@ -180,6 +187,9 @@ describe('glomo_implementation_planner: fails closed', () => {
       (content: string) => content.replace('Full guide: [Send payouts with the API](https://docs.glomo.one/payout/set-up)', ''),
     ],
     ['a skipped step number', (content: string) => content.replace('2. `getBeneficiaryByIdV2`', '3. `getBeneficiaryByIdV2`')],
+    ['a flow section without its ### variant heading', (content: string) => content.replace(/(## Payouts\n[\s\S]*?)### Calls, in order\n/, '$1')],
+    ['no Shared calls line', (content: string) => content.replace(/^Shared calls: .*$/m, '')],
+    ['two flows with the same id', (content: string) => content.replace('## Bank transfer collection', '## Payouts')],
   ] as const) {
     it(`reports not_available rather than a partial plan when the page has ${label}`, async () => {
       const mutated = mutate(guidePage.content);
@@ -216,5 +226,30 @@ describe('build check: authored flows against the spec', () => {
     const operations = specFromGuide();
     operations.set('createPayout', { method: 'POST', path: '/v2/payouts' });
     expect(findFlowProblems(flowGuideFromCorpus(corpus), operations).join('\n')).toMatch(/createPayout is POST \/v2\/payouts in the spec/);
+  });
+
+  it('reads operations from a spec document by operationId, method and path', () => {
+    const operations = specOperations({
+      paths: { '/payouts': { post: { operationId: 'createPayout' }, parameters: [] }, '/payouts/{id}': { get: { operationId: 'getPayoutById' } } },
+    });
+    expect([...operations]).toEqual([
+      ['createPayout', { method: 'POST', path: '/payouts' }],
+      ['getPayoutById', { method: 'GET', path: '/payouts/{id}' }],
+    ]);
+  });
+
+  it('the build step accepts the recorded docs when they match the spec', async () => {
+    await withCassette('docs-corpus.json', async () => {
+      const { guide } = await buildCheckedCorpus(specFromGuide());
+      expect(guide.flows.map((flow) => flow.id)).toEqual(FLOW_IDS);
+    });
+  });
+
+  it('the build step fails when a step names an operation the spec lacks', async () => {
+    const operations = specFromGuide();
+    operations.delete('createQuote');
+    await withCassette('docs-corpus.json', async () => {
+      await expect(buildCheckedCorpus(operations)).rejects.toThrow(/createQuote is not in the published spec/);
+    });
   });
 });
