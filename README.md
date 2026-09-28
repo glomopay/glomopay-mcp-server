@@ -59,25 +59,35 @@ The server runs as a **stateless Streamable HTTP** service. The only route is
 
 A credential is required only for the execution tools (`glomo_api_read`,
 `glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
-an agent can find and inspect operations before it holds a key. When present,
-`Authorization: Bearer <glomopay-secret>` carries the caller's own downstream
-Glomopay API secret (API-key pass-through): the server holds no secret of its own
-and proxies each call under the caller's key. A read or write with no credential
-is refused by the dispatcher before any downstream call is made. Credential
-handling is isolated behind a single seam
-(`src/features/auth/credential-resolver.ts`) so it can be replaced by the
-follow-on MCP token flow without touching the tool layer.
+an agent can find and inspect operations before it holds a key.
+
+The execution credential is a short-lived, MCP-purpose token issued by glomo, not
+a merchant API key. When one is present as `Authorization: Bearer <token>`, the
+server verifies its RS256 signature against the configured glomo public key and
+requires its `aud` claim to equal the configured MCP audience; anything else — an
+unsigned or tampered token, the wrong algorithm, or a merchant key minted for the
+external API — is rejected before any downstream call. The token's `scope` claim
+is then enforced per tool: reads need `read` or `both`, writes need `write` or
+`both`, and writes remain sandbox-only (`env` must be `sandbox`). A request with no
+credential still reaches discovery and `tools/list`; the execution tools fail
+closed. The server holds no private key. Verification is isolated behind a single
+seam (`src/features/auth/credential-resolver.ts`).
 
 ## Configuration
 
 Environment variables:
 
-| Variable           | Default        | Description                                          |
-| ------------------ | -------------- | ---------------------------------------------------- |
-| `API_HOST`         | —              | API origin, e.g. `https://api.glomopay.com`.         |
-| `PORT`             | `3000`         | Port to listen on.                                   |
-| `HOST`             | `127.0.0.1`    | Bind address.                                        |
-| `OPENAPI_SPEC_URL` | docs.glomo.one | Build-time spec source (overridable for CI/testing). |
+| Variable               | Default        | Description                                                     |
+| ---------------------- | -------------- | --------------------------------------------------------------- |
+| `API_HOST`             | —              | API origin, e.g. `https://api.glomopay.com`.                    |
+| `PORT`                 | `3000`         | Port to listen on.                                              |
+| `HOST`                 | `127.0.0.1`    | Bind address.                                                   |
+| `GLOMO_MCP_PUBLIC_KEY` | —              | PEM (SPKI) public key the agent credential is verified against. |
+| `GLOMO_MCP_AUDIENCE`   | —              | Expected `aud` claim on the agent credential.                   |
+| `OPENAPI_SPEC_URL`     | docs.glomo.one | Build-time spec source (overridable for CI/testing).            |
+
+Without `GLOMO_MCP_PUBLIC_KEY` and `GLOMO_MCP_AUDIENCE`, the execution tools fail
+closed (every credential is rejected); discovery still works.
 
 `API_HOST` is the origin only — the versioned base path (`/api/v1`, `/api/v2`) is
 resolved per operation from the spec.
@@ -97,9 +107,10 @@ unreachable spec never ships.
 
 ### Smoke test
 
+`tools/list` needs no credential:
+
 ```bash
 curl -s -X POST http://127.0.0.1:3000/mcp \
-  -H 'Authorization: Bearer <your-glomopay-secret>' \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'

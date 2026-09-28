@@ -2,7 +2,7 @@ import { CallToolResult } from '@modelcontextprotocol/sdk/types';
 
 import { TToolExtra } from '@/shared/tool/tool.module';
 import { ApiClient, ApiError, THttpMethod } from '@/shared/api-client/api-client.module';
-import { resolveCredential } from '@/features/auth/auth.module';
+import { CredentialVerifier, scopePermits } from '@/features/auth/auth.module';
 
 import { TSpecIndex } from './spec-index';
 
@@ -10,22 +10,12 @@ function errorResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }], isError: true };
 }
 
-function tokenEnvClaim(token: string): string | undefined {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return undefined;
-    const json = Buffer.from(payload, 'base64url').toString('utf8');
-    return (JSON.parse(json) as { env?: string }).env;
-  } catch {
-    return undefined;
-  }
-}
-
 export class Dispatcher {
   constructor(
     private specIndex: TSpecIndex,
     private allowlist: ReadonlySet<string>,
     private apiClient: ApiClient,
+    private verifier: CredentialVerifier,
   ) {}
 
   async dispatch(
@@ -50,12 +40,22 @@ export class Dispatcher {
       );
     }
 
-    const secret = resolveCredential(extra);
-    if (!secret) {
-      return errorResult('Unauthorized: no glomo API secret supplied for this request.');
+    const credential = await this.verifier.resolve(extra);
+    if (credential.status === 'absent') {
+      return errorResult('Unauthorized: no glomo credential supplied for this request.');
+    }
+    if (credential.status === 'invalid') {
+      return errorResult(`Unauthorized: ${credential.reason}.`);
     }
 
-    if (operation.method !== 'GET' && tokenEnvClaim(secret) !== 'sandbox') {
+    const { token: secret, scope, env } = credential.credential;
+    const isWrite = operation.method !== 'GET';
+
+    if (!scopePermits(scope, isWrite ? 'write' : 'read')) {
+      return errorResult(`Forbidden: this credential's scope "${scope}" does not permit ${isWrite ? 'write' : 'read'} operations.`);
+    }
+
+    if (isWrite && env !== 'sandbox') {
       return errorResult(`Refusing "${operationId}": the write tools are sandbox-only and require a sandbox credential.`);
     }
 

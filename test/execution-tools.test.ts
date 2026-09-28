@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import nock from 'nock';
 
@@ -10,6 +11,8 @@ import {
   resultText,
   SANDBOX_TOKEN,
   startTestServer,
+  TEST_AUDIENCE,
+  TEST_PUBLIC_KEY,
   withCassette,
   type ITestServer,
 } from './helpers';
@@ -211,7 +214,6 @@ describe('sandbox-only write guard', () => {
   for (const [label, bearer] of [
     ['production', jwt('production')],
     ['missing env claim', jwt()],
-    ['non-JWT', 'not-a-jwt'],
   ] as const) {
     it(`refuses a write with a ${label} credential without calling the API`, async () => {
       const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
@@ -221,6 +223,105 @@ describe('sandbox-only write guard', () => {
       expect(scope.isDone()).toBe(false);
     });
   }
+});
+
+describe('agent credential verification', () => {
+  const b64url = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const foreignKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+
+  function signRs256(privateKey: crypto.KeyObject, payload: object): string {
+    const input = `${b64url({ alg: 'RS256', typ: 'JWT' })}.${b64url(payload)}`;
+    return `${input}.${crypto.sign('RSA-SHA256', Buffer.from(input), privateKey).toString('base64url')}`;
+  }
+
+  const claims = () => ({ aud: TEST_AUDIENCE, scope: 'both', env: 'sandbox', iat: 0, exp: Math.floor(Date.now() / 1000) + 3600 });
+
+  async function readWith(bearer: string) {
+    const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
+    const response = await callTool(server.url, 'glomo_api_read', { operationId: 'getPayoutById', params: { id: 'pay_1' } }, bearer);
+    return { response, called: scope.isDone() };
+  }
+
+  it('refuses a malformed (non-JWT) credential without calling the API', async () => {
+    const { response, called } = await readWith('not-a-jwt');
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('Unauthorized');
+    expect(called).toBe(false);
+  });
+
+  it('refuses a token whose audience is not the MCP audience (a merchant external-API key)', async () => {
+    const { response, called } = await readWith(jwt('sandbox', { aud: 'glomo-external-api' }));
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('Unauthorized');
+    expect(called).toBe(false);
+  });
+
+  it('refuses a tampered token', async () => {
+    const [header, payload, signature] = jwt('sandbox').split('.');
+    const forged = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    const tampered = `${header}.${b64url({ ...forged, scope: 'both', injected: true })}.${signature}`;
+    const { response, called } = await readWith(tampered);
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('refuses an HS256 token signed with the public key (alg confusion)', async () => {
+    const input = `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url(claims())}`;
+    const forged = `${input}.${crypto.createHmac('sha256', TEST_PUBLIC_KEY).update(input).digest('base64url')}`;
+    const { response, called } = await readWith(forged);
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('refuses a token signed by a key that is not the configured one', async () => {
+    const { response, called } = await readWith(signRs256(foreignKey.privateKey, claims()));
+    expect(isRefused(response)).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it('blocks a read-only credential on a write tool without calling the API', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+    const response = await callTool(
+      server.url,
+      'glomo_api_write',
+      { operationId: 'createCustomer', params: CUSTOMER_BODY },
+      jwt('sandbox', { scope: 'read' }),
+    );
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('scope');
+    expect(scope.isDone()).toBe(false);
+  });
+
+  it('blocks a write-only credential on a read tool without calling the API', async () => {
+    const scope = nock(API_BASE).get('/api/v1/payouts/pay_1').reply(200, {});
+    const response = await callTool(
+      server.url,
+      'glomo_api_read',
+      { operationId: 'getPayoutById', params: { id: 'pay_1' } },
+      jwt('sandbox', { scope: 'write' }),
+    );
+    expect(isRefused(response)).toBe(true);
+    expect(resultText(response)).toContain('scope');
+    expect(scope.isDone()).toBe(false);
+  });
+
+  it('allows a read with a read-only credential', async () => {
+    const { response, called } = await readWith(jwt('sandbox', { scope: 'read' }));
+    expect(isRefused(response)).toBe(false);
+    expect(called).toBe(true);
+  });
+
+  it('allows a write with a write-only sandbox credential', async () => {
+    const scope = nock(API_BASE).post('/api/v1/customer').reply(201, {});
+    const response = await callTool(
+      server.url,
+      'glomo_api_write',
+      { operationId: 'createCustomer', params: CUSTOMER_BODY },
+      jwt('sandbox', { scope: 'write' }),
+    );
+    expect(isRefused(response)).toBe(false);
+    expect(scope.isDone()).toBe(true);
+  });
 });
 
 describe('recorded downstream responses', () => {

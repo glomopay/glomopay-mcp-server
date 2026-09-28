@@ -16,12 +16,15 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 - Two generic tools, `glomo_api_read` (GET) and `glomo_api_write` (POST/PATCH/DELETE), take
   `{ operationId, params }`. The split exists so a client can be granted reads without writes.
 - `Dispatcher.dispatch` (`src/core/dispatcher/dispatcher.ts`) runs every guard in order: spec lookup,
-  allowlist, method-vs-tool, credential, sandbox check on writes, path params. Then it routes params by OpenAPI location.
+  allowlist, method-vs-tool, credential verification, scope, sandbox check on writes, path params. Then it
+  routes params by OpenAPI location.
 - Versioned URLs (`spec-index.ts`): the spec server is `/api/v1` but v2 ops are written `/v2/...`, and the
   service mounts `/api/v1` and `/api/v2` as siblings. `API_HOST` is the origin only and each op's full path
   is resolved in the index. Naive concatenation gives `/api/v1/v2/...`.
-- `resolveCredential` (`src/features/auth/credential-resolver.ts`) is the only place credentials are read.
-  The future token flow replaces that function, not the tools or dispatcher.
+- `CredentialVerifier` (`src/features/auth/credential-resolver.ts`) is the only place credentials are read.
+  It verifies the agent credential (RS256 signature against the configured public key, `aud` = MCP audience)
+  and returns its `scope`/`env`; the dispatcher enforces scope and the sandbox rule. The public key and
+  audience come from env (`GLOMO_MCP_PUBLIC_KEY`, `GLOMO_MCP_AUDIENCE`); no private key lives on this service.
 
 ## Adding an operation
 
@@ -50,7 +53,10 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 Do not weaken these without an explicit security review.
 
 - The allowlist is the only path to execution. Never add internal, admin, key-rotation or multipart operations.
-- Write tools are sandbox-only and fail closed: the token's `env` claim must be exactly `sandbox`.
+- Execution credentials are verified, never passed through unchecked: RS256 signature, `aud` = MCP audience,
+  algorithm pinned to RS256. Enforce the `scope` claim (reads need `read`/`both`, writes need `write`/`both`).
+  Missing or unconfigured verification fails execution closed; discovery stays reachable.
+- Write tools are sandbox-only and fail closed: the credential's `env` claim must be exactly `sandbox`.
 - Path params are validated against the path template, never interpolated raw.
 - One MCP server instance per request.
 
