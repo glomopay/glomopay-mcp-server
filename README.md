@@ -14,12 +14,12 @@ tool surface cannot drift from the documented API.
 
 Discovery is exposed through four credential-free tools:
 
-| Tool                           | Description                                                                                              |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `glomo_api_search`             | Find the right operation by keyword; returns ranked `operationId`/method/path.                           |
-| `glomo_api_details`            | Return full parameter and request/response schema detail for given `operationId`s.                       |
-| `glomo_sample_request`         | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema.                    |
-| `glomo_implementation_planner` | Placeholder: returns guidance to `glomo_docs_search` and the published skills until authored flows land. |
+| Tool                           | Description                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `glomo_api_search`             | Find the right operation by keyword; returns ranked `operationId`/method/path.                               |
+| `glomo_api_details`            | Return full parameter and request/response schema detail for given `operationId`s.                           |
+| `glomo_sample_request`         | Generate a ready-to-run cURL / Python / Node sample for an operation from its schema.                        |
+| `glomo_implementation_planner` | Return the authored, ordered call sequence for an integration flow, verbatim from the docs Get started page. |
 
 Execution is exposed through two generic tools:
 
@@ -35,10 +35,16 @@ allowlisted operations carry the tool that runs them
 (`glomo_api_read`/`glomo_api_write`), and the rest are returned as documentation
 only (`executable: false`) so an agent can still read their schema without being
 able to run them. `glomo_sample_request` renders the credential as a
-`$GLOMO_API_KEY` placeholder. `glomo_implementation_planner` is a registered
-placeholder that points callers to `glomo_docs_search` and the published skills
-until authored per-flow call sequences land. None of the discovery tools need a
-credential — they run unauthenticated (see below).
+`$GLOMO_API_KEY` placeholder. `glomo_implementation_planner` reads the flows
+authored under "What are you building?" on the docs Get started page, from the same
+docs corpus `glomo_docs_search` uses. Given a `flow` id it returns every variant's
+steps in order, verbatim, each API step flagged `executable` with its tool, plus the
+variant's full guide link. Given a free-text `goal` it returns the best-matching
+flows to choose from, never a plan, so it cannot guess one. The build fails if a
+step breaks the step format or names an `operationId`, method or path that the
+spec doesn't have; if the page can't be parsed at runtime, the planner reports
+`not_available`. None of the discovery tools need a credential — they run
+unauthenticated (see below).
 
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
 `createCustomer`) and a flat `params` object. The dispatcher resolves the

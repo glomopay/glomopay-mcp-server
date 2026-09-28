@@ -10,7 +10,8 @@ import { ApiReadTool, ApiWriteTool } from '@/features/api-execution/api-executio
 import { ApiSearchTool, ApiDetailsTool } from '@/features/api-discovery/api-discovery.module';
 import { SampleRequestTool } from '@/features/sample-request/sample-request.module';
 import { ImplementationPlannerTool } from '@/features/implementation-planner/implementation-planner.module';
-import { DocsIndex } from '@/core/docs/docs.module';
+import { DocsIndex, readCorpusFile } from '@/core/docs/docs.module';
+import { flowGuideFromCorpus, FlowFormatError, type IFlowGuide } from '@/core/planner/planner.module';
 import { DocsSearchTool } from '@/features/docs-search/docs-search.module';
 import { ApiClient } from '@/shared/api-client/api-client.module';
 import { logger } from '@/shared/logger/logger.module';
@@ -59,6 +60,17 @@ function createObserver(
   return { observer: new ToolCallObserver({ analytics, metrics, verifier }), analytics };
 }
 
+function loadFlowGuide(corpus: { url: string; content: string }[] | undefined): IFlowGuide | undefined {
+  if (!corpus) return undefined;
+  try {
+    return flowGuideFromCorpus(corpus);
+  } catch (error) {
+    if (!(error instanceof FlowFormatError)) throw error;
+    logger.warn('authored flows are unavailable; the planner reports not_available', { component: 'planner', reason: error.message });
+    return undefined;
+  }
+}
+
 export async function createApp({
   specPath,
   apiHost,
@@ -92,11 +104,12 @@ export async function createApp({
   });
 
   const mcpServer = new MCPServer(observer);
-  if (docsCorpusPath) mcpServer.registerTool(new DocsSearchTool(DocsIndex.fromCorpusFile(docsCorpusPath)));
+  const corpus = docsCorpusPath ? readCorpusFile(docsCorpusPath) : undefined;
+  if (corpus) mcpServer.registerTool(new DocsSearchTool(DocsIndex.fromPages(corpus)));
   mcpServer.registerTool(new ApiSearchTool(catalog));
   mcpServer.registerTool(new ApiDetailsTool(catalog));
   mcpServer.registerTool(new SampleRequestTool(catalog));
-  mcpServer.registerTool(new ImplementationPlannerTool());
+  mcpServer.registerTool(new ImplementationPlannerTool(catalog, loadFlowGuide(corpus)));
   mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
   mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
 
