@@ -16,6 +16,9 @@ const KEEP_OPERATION_IDS = [
   'createDocument',
   'createSubscription',
   'createPrice',
+  'getLrsBanks',
+  'createLrsCustomerBankAccount',
+  'createLrsQuote',
 ];
 const OFF_SURFACE_CANDIDATES = ['rotateApiKey', 'onboardMerchant', 'updateMerchant', 'createDocument'];
 
