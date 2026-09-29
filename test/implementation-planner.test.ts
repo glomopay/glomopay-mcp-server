@@ -140,6 +140,17 @@ describe('glomo_implementation_planner: plans for a flow', () => {
     expect(byId.get('createDocument')).not.toHaveProperty('tool');
   });
 
+  it('marks the LRS remittance API steps executable, but not the multipart document upload', async () => {
+    const [remittance, withdrawal] = (await payload<IPlan>(server.url, { flow: 'lrs-remittance' })).variants;
+    const byId = new Map(
+      [...remittance.steps, ...withdrawal.steps].flatMap((step) => (step.kind === 'api' ? [[step.operationId, step] as const] : [])),
+    );
+    expect(byId.get('getLrsBanks')).toMatchObject({ executable: true, tool: 'glomo_api_read' });
+    expect(byId.get('createLrsCustomerBankAccount')).toMatchObject({ executable: true, tool: 'glomo_api_write' });
+    expect(byId.get('createLrsQuote')).toMatchObject({ executable: true, tool: 'glomo_api_write' });
+    expect(byId.get('createDocument')).toMatchObject({ executable: false });
+  });
+
   it('attaches the shared-calls note', async () => {
     expect((await payload<IPlan>(server.url, { flow: 'lrs-remittance' })).sharedNotes).toMatch(/^Shared calls: .*createCustomer/);
   });

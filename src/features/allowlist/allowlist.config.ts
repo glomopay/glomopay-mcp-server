@@ -18,6 +18,10 @@ export const EXECUTION_ALLOWLIST: readonly string[] = [
   'getDocuments',
   'getDocumentById',
 
+  'getLrsBanks',
+  'createLrsCustomerBankAccount',
+  'createLrsQuote',
+
   'listKycLinks',
   'createKycLink',
   'getKycLinkById',

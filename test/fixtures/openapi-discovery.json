@@ -18,7 +18,7 @@
         ],
         "summary": "Create a new payout",
         "operationId": "createPayout",
-        "description": "Create a payout in one of two ways:\n- **Payout without quote** — specify the beneficiary, currencies and amount inline. Fees and the FX\n  rate are determined at creation time (`CreatePayoutWithoutQuoteRequest`).\n\n- **Payout with quote** — pass a `quote_id` from `POST /quotes` (with `resource: payout`) to settle\n  against a locked rate and fee breakdown. The currencies, amount and payment rail are derived from\n  the quote and must not be sent (`CreatePayoutWithQuoteRequest`).\n\nThe request variant is selected by the presence of `quote_id`.\nIf payout queueing is enabled on your account and the balance in the source currency does not cover the amount plus fees, the payout is accepted with `status: queued` instead of being rejected. Glomo releases it automatically once the balance covers it. Fees and the FX rate are fixed at creation and honoured when the payout is released. Without payout queueing, a short balance is rejected at creation.\n",
+        "description": "Create a payout in one of two ways:\n- **Payout without quote** — specify the beneficiary, currencies and amount inline. Fees and the FX\n  rate are determined at creation time (`CreatePayoutWithoutQuoteRequest`).\n\n- **Payout with quote** — pass a `quote_id` from `POST /quotes` (with `resource: payout`) to settle\n  against a locked rate and fee breakdown. The currencies, amount and payment rail are derived from\n  the quote and must not be sent (`CreatePayoutWithQuoteRequest`).\n\nThe request variant is selected by the presence of `quote_id`.\nIf payout queueing is enabled on your account, every payout is accepted with `status: queued`, including one that the balance in the source currency already covers, and a payout the balance does not cover is accepted instead of rejected. Glomo releases it automatically once the balance covers the amount plus fees. Fees and the FX rate are fixed at creation and honoured when the payout is released. Without payout queueing, a short balance is rejected at creation.\n",
         "requestBody": {
           "required": true,
           "content": {
@@ -187,8 +187,8 @@
             "schema": {
               "type": "string"
             },
-            "description": "The unique identifier for the payin.",
-            "example": "payin_E602dMzgjpDC"
+            "description": "The unique identifier for the payin. Accepts a payment link ID (`plink_`), an order ID\n(`order_`) or an Add Balance top-up ID (`addfunds_`). Any other value returns `400`.\n",
+            "example": "plink_E602dMzgjpDC"
           },
           {
             "in": "query",
@@ -1144,7 +1144,7 @@
                   },
                   "amount": {
                     "type": "integer",
-                    "description": "The amount to refund in cents. Required for partial refunds. If not provided, the full payment amount will be refunded. For example, 1000 cents is $10.00. The currency is determined by the payment's currency.\n",
+                    "description": "The amount to refund, in the smallest unit of the payment's `converted_currency`, the merchant-side currency (cents for USD), or the currency received for a bank transfer not yet matched to a payin. `1000` is $10.00 when that currency is USD. Required for partial refunds. If not provided, the full payment amount will be refunded. If partial refunds are not enabled on your account, an amount below the payment's `converted_amount` is rejected with `400` and the message `Partial refunds are not enabled for this business`, and an amount equal to or greater than it refunds the full payment. The refund returns its own `amount` in the refund's `currency`, which can differ from this one.\n",
                     "example": 1000
                   },
                   "request_id": {
@@ -1458,7 +1458,7 @@
                     "interval_count": 1,
                     "billing_cycles": 12,
                     "start_date": "2025-01-01",
-                    "expires_at": "2025-01-07",
+                    "expires_at": "2026-10-15",
                     "notify_customer": true,
                     "starts_with_first_payment": true
                   }
@@ -1475,7 +1475,7 @@
                     "max_amount": 5000,
                     "currency": "USD",
                     "interval_type": "as_presented",
-                    "expires_at": "2025-01-07",
+                    "expires_at": "2026-10-15",
                     "notify_customer": true,
                     "starts_with_first_payment": true
                   }
@@ -1492,7 +1492,7 @@
                     "max_amount": 5000,
                     "currency": "USD",
                     "interval_type": "as_presented",
-                    "expires_at": "2025-01-07",
+                    "expires_at": "2026-10-15",
                     "notify_customer": true,
                     "starts_with_first_payment": true,
                     "split_ids": [
@@ -1668,6 +1668,442 @@
         ]
       }
     },
+    "/lrs/banks": {
+      "get": {
+        "tags": [
+          "lrs"
+        ],
+        "summary": "List LRS banks",
+        "description": "Returns the banks your customers can remit from under LRS. Only banks enabled for your account are listed, so the list can be empty. Use a `bank_code` from this list when you register a customer's LRS bank account and when you create an LRS payin quote.\n",
+        "operationId": "getLrsBanks",
+        "responses": {
+          "200": {
+            "description": "Banks enabled for LRS on your account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LrsBank"
+                  }
+                },
+                "example": [
+                  {
+                    "bank_code": "hdfc",
+                    "bank_name": "REDACTED"
+                  },
+                  {
+                    "bank_code": "axis",
+                    "bank_name": "REDACTED"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — invalid or missing authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Unauthorized"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Missing token"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/customer/{id}/bank_account": {
+      "post": {
+        "tags": [
+          "lrs"
+        ],
+        "summary": "Register a customer's LRS bank account",
+        "description": "Registers the Indian bank account an LRS remittance is debited from. Pass the returned `id` (`acclrs_...`) as `lrs.bank_account_id` when you create an LRS order.\n\nThis is not the same endpoint as `POST /customer/{id}/bank-accounts` (`createCustomerBankAccount`), and the two sets of accounts are kept apart:\n- A customer can hold several LRS bank accounts. Registering another one adds to the list, whereas\n  `createCustomerBankAccount` keeps one account per customer and replaces it. Registering the same\n  account number at the same bank twice is rejected here.\n\n- LRS bank accounts are not returned by `GET /customer/{id}/bank-accounts`, and a bank account from\n  `POST /customer/{id}/bank-accounts` cannot be used as `lrs.bank_account_id`.\n\n- The account number is returned in full, as sent.\n",
+        "operationId": "createLrsCustomerBankAccount",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The ID of the customer",
+            "example": "cust_68468bfcxaGo2"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LrsCustomerBankAccount",
+                "required": [
+                  "bank_code",
+                  "account_number"
+                ]
+              },
+              "example": {
+                "bank_code": "hdfc",
+                "account_number": "REDACTED",
+                "bank_customer_id": "12345678"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "LRS bank account registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LrsCustomerBankAccount"
+                },
+                "example": {
+                  "id": "acclrs_68468c03g9xt7",
+                  "bank_code": "hdfc",
+                  "account_number": "REDACTED",
+                  "bank_customer_id": "12345678"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request — `bank_code` or `account_number` is missing, `bank_code` is not a value returned by `GET /lrs/banks` for your account, `account_number` is not all digits or its length is outside the range the bank accepts, `bank_customer_id` is not all digits or its length is outside the range the bank accepts, the customer does not exist on your account, or the same account number is already registered for this customer at the same bank.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Bad Request"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Bank account already exists"
+                    }
+                  }
+                },
+                "examples": {
+                  "account_number_missing": {
+                    "summary": "account_number missing",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Account number can't be blank"
+                    }
+                  },
+                  "bank_code_not_valid": {
+                    "summary": "bank_code is not a supported bank",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Bank code HDFC is not a valid bank code"
+                    }
+                  },
+                  "bank_code_not_enabled": {
+                    "summary": "Bank not enabled for your account",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Bank code axis is not enabled for your business"
+                    }
+                  },
+                  "bank_customer_id_not_digits": {
+                    "summary": "bank_customer_id contains a non-digit",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Bank customer ID must contain only digits"
+                    }
+                  },
+                  "customer_not_found": {
+                    "summary": "Customer does not exist on your account",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Customer does not exist"
+                    }
+                  },
+                  "duplicate_account": {
+                    "summary": "Account already registered at the same bank",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Bank account already exists"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — invalid or missing authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Unauthorized"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Missing token"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
+    "/lrs/quotes": {
+      "post": {
+        "tags": [
+          "lrs"
+        ],
+        "summary": "Create an LRS quote",
+        "description": "Creates a quote for an LRS remittance (`resource: payin`) or an LRS withdrawal (`resource: payout`). Use it to show the customer the exchange rate, the GST and the converted amount before they proceed. Payout quotes expire 30 minutes after they are created; for a payin quote, rely on the returned `expires_at`.\n\nThis is not the same endpoint as `POST /quotes` (`createQuote`). To create an LRS order, pass the payin quote's `id` as `lrs.lrs_quote_id` on `POST /orders`, with `currency` set to `USD` and `amount` equal to the `USD` side of the quote: `from.amount` when `source_currency` is `USD`, `to.amount` when it is `INR`.\n\nFor a payin quote, `bank_code` is required and must be a bank enabled for your account (see `GET /lrs/banks`). Either direction between `INR` and `USD` is supported. For a payout quote, only `USD` to `INR` is supported and `bank_code` must not be sent. LRS must be enabled for your account.\n",
+        "operationId": "createLrsQuote",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLrsQuoteRequest"
+              },
+              "examples": {
+                "payin_inr_to_usd": {
+                  "summary": "Payin quote from INR to USD",
+                  "value": {
+                    "bank_code": "hdfc",
+                    "source_amount": 4400000,
+                    "source_currency": "INR",
+                    "target_currency": "USD"
+                  }
+                },
+                "payout_usd_to_inr": {
+                  "summary": "Payout quote from USD to INR",
+                  "value": {
+                    "resource": "payout",
+                    "source_amount": 1000000,
+                    "source_currency": "USD",
+                    "target_currency": "INR"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Quote created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LrsQuote"
+                },
+                "examples": {
+                  "payin_inr_to_usd": {
+                    "summary": "Payin quote from INR to USD",
+                    "value": {
+                      "id": "quote_6ab60de4Kx7Pq",
+                      "from": {
+                        "amount": 4400000,
+                        "currency": "INR"
+                      },
+                      "to": {
+                        "amount": 51763,
+                        "currency": "USD"
+                      },
+                      "fx_rate": "84.85",
+                      "bank_code": "hdfc",
+                      "total_tax": 7906,
+                      "expires_at": "2026-09-25T06:30:04.113Z",
+                      "created_at": "2026-09-25T06:00:04.113Z"
+                    }
+                  },
+                  "payout_usd_to_inr": {
+                    "summary": "Payout quote from USD to INR",
+                    "value": {
+                      "id": "quote_6ab4e690Rt3Vm",
+                      "from": {
+                        "amount": 1000000,
+                        "currency": "USD"
+                      },
+                      "to": {
+                        "amount": 93953000,
+                        "currency": "INR"
+                      },
+                      "fx_rate": "94.0",
+                      "total_tax": 47000,
+                      "expires_at": "2026-09-24T09:30:00.412Z",
+                      "created_at": "2026-09-24T09:00:00.412Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request — a required field is missing, a currency is not `INR` or `USD`, both currencies are the same, `source_amount` is not a whole number, `bank_code` is missing on a payin quote or is not enabled for your account, `bank_code` is sent on a payout quote, a payout quote is not `USD` to `INR`, the amount on a payin quote is outside the bank's limits, the converted amount on a payout quote is outside the range a payout can be sent for, or LRS is not enabled for your account.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Bad Request"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Validation failed: Bank code can't be blank"
+                    }
+                  }
+                },
+                "examples": {
+                  "bank_code_missing": {
+                    "summary": "bank_code missing on a payin quote",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Bank code can't be blank"
+                    }
+                  },
+                  "bank_code_not_enabled": {
+                    "summary": "Bank not enabled for your account",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Bank code icici is not enabled for your business"
+                    }
+                  },
+                  "currency_not_supported": {
+                    "summary": "Currency other than INR or USD",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Source currency is not supported"
+                    }
+                  },
+                  "same_currency": {
+                    "summary": "source_currency equals target_currency",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: source_currency and target_currency cannot be the same"
+                    }
+                  },
+                  "amount_not_integer": {
+                    "summary": "source_amount is not a whole number",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Source amount must be an integer"
+                    }
+                  },
+                  "below_minimum": {
+                    "summary": "Amount below the bank's minimum",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Amount 100.00 INR is below minimum limit. (Minimum limit is 10.00 USD)"
+                    }
+                  },
+                  "above_maximum": {
+                    "summary": "Amount above the bank's maximum",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Amount 5,000,000.00 INR exceeds maximum limit. (Maximum limit is 50,000.00 USD)"
+                    }
+                  },
+                  "bank_code_on_payout": {
+                    "summary": "bank_code sent on a payout quote",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: Bank code is not supported for payout quotes"
+                    }
+                  },
+                  "payout_corridor": {
+                    "summary": "Payout quote other than USD to INR",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "Validation failed: payout quotes are only supported from USD to INR"
+                    }
+                  },
+                  "payout_no_options": {
+                    "summary": "Payout amount outside the range a payout can be sent for",
+                    "value": {
+                      "error": "Bad Request",
+                      "message": "No available options for this amount"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized — invalid or missing authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Unauthorized"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Missing token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity — no exchange rate is available for the bank right now.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Unprocessable Entity"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "No active exchange rate found"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ]
+      }
+    },
     "/api-keys/rotate": {
       "post": {
         "tags": [
@@ -1690,7 +2126,7 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 604800,
-                    "description": "Duration (in seconds) for which the previous key remains valid after rotation. Must be an integer between 0 and 604800 (7 days). Use this window to update all integrations before the old key is revoked.\n",
+                    "description": "Duration (in seconds) for which the previous key remains valid after rotation. Must be an integer between 0 and 604800 (7 days), sent as a JSON number. A value outside that range, or a string such as `\"3600\"`, returns `400`. Use this window to update all integrations before the old key is revoked.\n",
                     "example": 3600
                   }
                 }
@@ -1835,7 +2271,7 @@
               "SGD",
               "AUD"
             ],
-            "description": "The currency from which the amount is deducted from your source balance.\n",
+            "description": "The currency of the balance the payout is paid from, as an [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) code from the list above. Any other value returns `400` with a message containing `Source currency is not supported`.\n",
             "example": "USD"
           },
           "destination_currency": {
@@ -1856,13 +2292,13 @@
           "source_amount": {
             "type": "integer",
             "minimum": 1,
-            "description": "The amount you intend to send, in the smallest unit of the source currency (e.g. 1000 equates to $10.00 in USD).\n\nExactly one of `source_amount` or `destination_amount` must be provided (not both).\n",
+            "description": "The amount you intend to send, in the smallest unit of `source_currency` (cents for USD). `100000` is $1,000.00 when `source_currency` is USD.\nExactly one of `source_amount` or `destination_amount` must be provided (not both).\n",
             "example": 100000
           },
           "destination_amount": {
             "type": "integer",
             "minimum": 1,
-            "description": "The amount the beneficiary will receive, in the smallest unit of the destination currency (e.g. cents for USD, paisa for INR).\n\nExactly one of `source_amount` or `destination_amount` must be provided (not both).\n",
+            "description": "The amount the beneficiary will receive, in the smallest unit of `destination_currency` (paise for INR, cents for USD). `8235000` is ₹82,350.00 when `destination_currency` is INR.\nExactly one of `source_amount` or `destination_amount` must be provided (not both).\n",
             "example": 8235000
           },
           "payment_rail": {
@@ -1886,7 +2322,7 @@
           "invoice_number": {
             "type": "string",
             "maxLength": 50,
-            "description": "An optional invoice reference for this payout.\n",
+            "description": "An optional invoice reference for this payout, up to 50 characters. It is returned on the payout as `invoice_number`. A longer value returns `400` with a message containing `Invoice number must be 50 characters or less`.\n",
             "example": "INV-2026-001"
           },
           "request_id": {
@@ -1935,7 +2371,7 @@
           "invoice_number": {
             "type": "string",
             "maxLength": 50,
-            "description": "An optional invoice reference for this payout.\n",
+            "description": "An optional invoice reference for this payout, up to 50 characters. It is returned on the payout as `invoice_number`. A longer value returns `400` with a message containing `Invoice number must be 50 characters or less`.\n",
             "example": "INV-2026-001"
           },
           "request_id": {
@@ -1968,9 +2404,8 @@
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid",
             "readOnly": true,
-            "description": "The unique identifier for the payin.\n",
+            "description": "The unique identifier for the payout.\n",
             "example": "payout_DdWp_HUbOnlg"
           },
           "status": {
@@ -1991,7 +2426,7 @@
           "destination_amount": {
             "type": "number",
             "minimum": 1,
-            "description": "The amount the beneficiary will receive, expressed in the smallest unit of the specified currency (e.g., cents for USD, paisa for INR). \n      For example, 1000 represents $10.00 in USD. The actual currency is determined by the currency field. Note: \"cents\" is used generically to denote \n      the minimal currency unit, not necessarily USD.\n",
+            "description": "The amount the beneficiary will receive, in the smallest unit of `destination_currency` (paise for INR, cents for USD). `1000` is $10.00 when `destination_currency` is USD.\n",
             "example": 1000
           },
           "destination_currency": {
@@ -2003,7 +2438,7 @@
           "source_amount": {
             "type": "number",
             "minimum": 1,
-            "description": "The amount you intend to send, also specified in the smallest unit of the selected currency. For example, 1000 equates to $10.00 in USD. The currency field determines which currency is used. As with destination_amount, \"cents\" is a placeholder for the minimal unit, not specifically USD.\n",
+            "description": "The amount you intend to send, in the smallest unit of `source_currency` (cents for USD). `1000` is $10.00 when `source_currency` is USD.\n",
             "example": 1000
           },
           "source_currency": {
@@ -2014,8 +2449,7 @@
           },
           "beneficiary_id": {
             "type": "string",
-            "format": "uuid",
-            "description": "The unique identifier for the beneficiary.\n",
+            "description": "The unique identifier of the beneficiary the payout is sent to.\n",
             "example": "bene_5JU9yv0lGSUP"
           },
           "documents": {
@@ -2040,7 +2474,7 @@
                   "null"
                 ],
                 "format": "iso-4217",
-                "description": "The destination currency code",
+                "description": "The destination currency, as an [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) code. `null` when no rate has been recorded yet.\n",
                 "example": "USD"
               },
               "rate": {
@@ -2049,7 +2483,7 @@
                   "null"
                 ],
                 "format": "float",
-                "description": "The conversion rate factor",
+                "description": "Units of the destination currency (`mid_market_rate.currency`) per one unit of `source_currency`. `1.17` with `currency` `USD` on a payout from EUR to USD means 1 EUR = 1.17 USD. `1` when the source and destination currencies are the same. `null` when no rate has been recorded yet.\n",
                 "example": 1.17
               }
             },
@@ -2063,14 +2497,20 @@
                 "type": "object",
                 "properties": {
                   "currency": {
-                    "type": "string",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "format": "iso-4217",
-                    "description": "The currency code for the FX fee",
+                    "description": "The currency of the FX fee, as an [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) code. `null` until fees are applied to the payout.\n",
                     "example": "USD"
                   },
                   "amount": {
-                    "type": "number",
-                    "description": "The amount of the FX fee",
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "description": "The FX fee, in the smallest unit of this fee's `currency`, which is the payout's `source_currency`. `200` is $2.00 when that currency is USD. `null` until fees are applied to the payout; a zero fee is `0`.\n",
                     "example": 200
                   }
                 },
@@ -2080,14 +2520,20 @@
                 "type": "object",
                 "properties": {
                   "currency": {
-                    "type": "string",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "format": "iso-4217",
-                    "description": "The currency code for the transaction fee",
+                    "description": "The currency of the transaction fee, as an [ISO 4217](https://en.wikipedia.org/wiki/ISO_4217) code. `null` until fees are applied to the payout.\n",
                     "example": "USD"
                   },
                   "amount": {
-                    "type": "number",
-                    "description": "The amount of the transaction fee",
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "description": "The transaction fee, in the smallest unit of this fee's `currency`, which is the payout's `source_currency`. `100` is $1.00 when that currency is USD. `null` until fees are applied to the payout; a zero fee is `0`.\n",
                     "example": 100
                   }
                 },
@@ -2098,16 +2544,16 @@
           },
           "created_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the payout was created\n",
+            "description": "When the payout was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "updated_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the payout was last updated\n",
+            "description": "When the payout was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "utr": {
@@ -2158,7 +2604,7 @@
             ],
             "readOnly": true,
             "maxLength": 50,
-            "description": "The invoice reference provided when the payout was created.\n",
+            "description": "The invoice reference sent when the payout was created, up to 50 characters. `null` when none was sent.\n",
             "example": "INV-2026-001"
           },
           "fee_collection_mode": {
@@ -2273,7 +2719,7 @@
               "null"
             ],
             "description": "The unique identifier for the payin. This is set only for payments associated to a payin.\n",
-            "example": "payin_E602dMzgjpDC"
+            "example": "plink_E602dMzgjpDC"
           },
           "payin_type": {
             "type": [
@@ -2376,7 +2822,7 @@
                     },
                     "max_count": {
                       "type": "integer",
-                      "description": "The maximum number of documents that can be submitted for this requirement.\n",
+                      "description": "The maximum number of documents that can be submitted for this requirement, as a count of documents. `1` when the requirement does not set a higher limit.\n",
                       "example": 1
                     }
                   }
@@ -2393,7 +2839,7 @@
           "payment_amount": {
             "type": "number",
             "minimum": 1,
-            "description": "The total amount the customer pays in cents (includes customer-borne fees if applicable). For example, 374580 cents is 3,745.80 AED. The currency is determined by the `payment_currency` field.\n",
+            "description": "The total amount the customer pays (includes customer-borne fees if applicable), in the smallest unit of `payment_currency`, the customer-side currency. `374580` is 3,745.80 AED when `payment_currency` is AED.\n",
             "example": 374580
           },
           "converted_currency": {
@@ -2405,8 +2851,8 @@
           "converted_amount": {
             "type": "number",
             "minimum": 1,
-            "description": "The final amount after currency conversion in cents (includes all fees). For example, 102000 cents is $1,020.00. The currency is determined by the `converted_currency` field.\n",
-            "example": 102000
+            "description": "The payment amount in the smallest unit of `converted_currency`, the merchant-side currency. `100000` is $1,000.00 when `converted_currency` is USD. Always the same value as `requested_amount`. For a payment against an order, payment link or subscription, it is the amount requested and excludes customer-borne fees, which are counted only in `payment_amount`. A bank transfer that is not yet connected to an order or payment link shows the amount and currency received. Once it is connected and the amount received matches the payin's quote, it shows the merchant-side amount like any other payment.\n",
+            "example": 100000
           },
           "requested_currency": {
             "type": "string",
@@ -2417,7 +2863,7 @@
           "requested_amount": {
             "type": "number",
             "minimum": 1,
-            "description": "The amount originally requested by the merchant in cents, excluding customer-borne fees. For example, 100000 cents is $1,000.00. The currency is determined by the `requested_currency` field.\n",
+            "description": "The amount requested by the merchant, in the smallest unit of `requested_currency`, the merchant-side currency. `100000` is $1,000.00 when `requested_currency` is USD. Always the same value as `converted_amount`. For a payment against an order, payment link or subscription, it excludes customer-borne fees, which are counted only in `payment_amount`. A bank transfer that is not yet connected to an order or payment link shows the amount and currency received. Once it is connected and the amount received matches the payin's quote, it shows the merchant-side amount like any other payment.\n",
             "example": 100000
           },
           "purpose_code": {
@@ -2468,7 +2914,7 @@
             ],
             "readOnly": true,
             "format": "date-time",
-            "description": "The timestamp at which the payment was completed. `null` if the payment has not been paid.\n",
+            "description": "When the payment was completed, as an ISO 8601 date-time in UTC. `null` if the payment has not been paid.\n",
             "example": "2024-12-06T11:38:37.130Z"
           },
           "fee_bearer": {
@@ -2498,14 +2944,14 @@
             "type": "string",
             "readOnly": true,
             "format": "date-time",
-            "description": "The creation timestamp of the payment.\n",
+            "description": "When the payment was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2024-12-06T11:38:37.130Z"
           },
           "updated_at": {
             "type": "string",
             "readOnly": true,
             "format": "date-time",
-            "description": "The last update timestamp of the payment.\n",
+            "description": "When the payment was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2024-12-06T11:38:37.130Z"
           },
           "customer_id": {
@@ -3048,10 +3494,9 @@
                   "address_line1",
                   "city",
                   "state",
-                  "country_code",
-                  "postal_code"
+                  "country_code"
                 ],
-                "description": "The address of the beneficiary. All fields except address_line2 are required.\n",
+                "description": "The address of the beneficiary. `address_line1`, `city`, `state` and `country_code` are required; `address_line2` and `postal_code` are optional.\n",
                 "properties": {
                   "address_line1": {
                     "type": "string",
@@ -3081,7 +3526,7 @@
                   },
                   "postal_code": {
                     "type": "string",
-                    "description": "The postal code of the beneficiary's address (required).",
+                    "description": "The postal code of the beneficiary's address (optional).",
                     "example": "10001"
                   }
                 }
@@ -3137,10 +3582,9 @@
                   "address_line1",
                   "city",
                   "state",
-                  "country_code",
-                  "postal_code"
+                  "country_code"
                 ],
-                "description": "The address of the bank. Required for `category: lrs`, optional for `category: payout`. When sent, all fields except address_line2 are required.\n",
+                "description": "The address of the bank. Required for `category: lrs`, optional for `category: payout`. When sent, `address_line1`, `city`, `state` and `country_code` are required; `address_line2` and `postal_code` are optional.\n",
                 "properties": {
                   "address_line1": {
                     "type": "string",
@@ -3170,7 +3614,7 @@
                   },
                   "postal_code": {
                     "type": "string",
-                    "description": "The postal code of the bank's address (required).",
+                    "description": "The postal code of the bank's address (optional).",
                     "example": "10013"
                   }
                 }
@@ -3515,7 +3959,8 @@
           },
           "dob": {
             "type": "string",
-            "description": "The date of birth of the customer\n",
+            "format": "date",
+            "description": "The date of birth of the customer, as a calendar date in `YYYY-MM-DD` format with no time or time zone. Must be a date before today.\n",
             "example": "2003-11-29"
           },
           "nationality": {
@@ -3562,16 +4007,16 @@
           },
           "created_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the customer was created\n",
+            "description": "When the customer was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "updated_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the customer was last updated\n",
+            "description": "When the customer was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           }
         }
@@ -3640,7 +4085,7 @@
           },
           "invoice_number": {
             "type": "string",
-            "description": "Number/Id of the invoice submitted with order.\n",
+            "description": "Number/Id of the invoice submitted with order. LRS orders (sent with `lrs`) don't store this field and return it as `null`, but a value you send is still validated.\n",
             "example": "RG12FF590"
           },
           "invoice_description": {
@@ -3650,7 +4095,7 @@
           },
           "invoice_amount": {
             "type": "number",
-            "description": "The amount in cents for which invoice was generated. It can be more  than the amount requested in this order\n",
+            "description": "The amount on the invoice, in the smallest unit of the order's `currency`, the same unit as `amount` (cents for USD). `1000` is $10.00 when `currency` is USD. Must be greater than or equal to `amount`.\n",
             "example": 1000
           },
           "reference_number": {
@@ -3706,6 +4151,9 @@
               "bank_customer_id": "7189204715"
             }
           },
+          "lrs": {
+            "$ref": "#/components/schemas/LrsOrderDetails"
+          },
           "payment_methods": {
             "type": "array",
             "items": {
@@ -3723,16 +4171,16 @@
           },
           "created_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the order was created\n",
+            "description": "When the order was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "updated_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the order was last updated\n",
+            "description": "When the order was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "request_id": {
@@ -3780,7 +4228,7 @@
           },
           "invoice_amount": {
             "type": "number",
-            "description": "The amount in cents for which invoice was generated. It can be more than the amount requested in this order.\n",
+            "description": "The amount on the invoice, in the smallest unit of the quote's `destination_currency`, which is the currency the order is created in (cents for USD). `1000` is $10.00 when that currency is USD. Must be greater than or equal to the quote's `destination_amount`.\n",
             "example": 1000
           },
           "reference_number": {
@@ -3958,16 +4406,16 @@
               },
               "created_at": {
                 "type": "string",
-                "format": "timestamp",
+                "format": "date-time",
                 "readOnly": true,
-                "description": "Timestamp representing when the order was created\n",
+                "description": "When the order was created, as an ISO 8601 date-time in UTC.\n",
                 "example": "2021-06-01T12:00:00Z"
               },
               "updated_at": {
                 "type": "string",
-                "format": "timestamp",
+                "format": "date-time",
                 "readOnly": true,
-                "description": "Timestamp representing when the order was last updated\n",
+                "description": "When the order was last updated, as an ISO 8601 date-time in UTC.\n",
                 "example": "2021-06-01T12:00:00Z"
               }
             }
@@ -4025,7 +4473,7 @@
           },
           "balance_used": {
             "type": "object",
-            "description": "The balance deducted to process the refund.\n",
+            "description": "The balance deducted to process the refund, with `amount` in the smallest unit of `currency`.\n",
             "properties": {
               "currency": {
                 "type": "string",
@@ -4035,7 +4483,7 @@
               },
               "amount": {
                 "type": "integer",
-                "description": "The amount deducted in cents.\n",
+                "description": "The amount deducted, in the smallest unit of `balance_used.currency` (cents for USD). `1000` is $10.00 when that currency is USD.\n",
                 "example": 1000
               }
             }
@@ -4131,7 +4579,7 @@
           "amount": {
             "type": "number",
             "minimum": 1,
-            "description": "The amount you want to receive in cents. For example, 1000 cents is $10.00.  The currency is determined by the `currency` field. `Cents` is a general  term for the smallest unit of currency in any currency. It does not  necessarily mean USD cents.\n",
+            "description": "The refund amount, in the smallest unit of `currency` (cents for USD). `1000` is $10.00 when `currency` is USD. `currency` is the payment's `payment_currency` (the currency the customer paid in), or its `converted_currency` when the payment has no `payment_currency`, so it can differ from the currency of the `amount` you send when creating the refund.\n",
             "example": 1000
           },
           "utr": {
@@ -4148,16 +4596,16 @@
           },
           "created_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the refund was created\n",
+            "description": "When the refund was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "updated_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the refund was last updated\n",
+            "description": "When the refund was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           }
         }
@@ -4172,7 +4620,7 @@
             "type": "string",
             "readOnly": true,
             "description": "The unique identifier for the payment link.\n",
-            "example": "payin_678a4c88hpAjf"
+            "example": "plink_678a4c88hpAjf"
           },
           "customer_id": {
             "type": "string",
@@ -4256,20 +4704,24 @@
           },
           "expires_at": {
             "type": "string",
-            "format": "timestamp",
-            "description": "Date when the payment_link will expire. Expiry can not be less than or equal  to current date and can be upto 6 months in future.\n",
-            "example": "2025-02-15T00:00:00.000Z"
+            "format": "date-time",
+            "description": "When the payment link expires. Send an ISO 8601 date-time with a UTC offset or `Z` (`YYYY-MM-DDThh:mm:ssZ`). A value without an offset is read as UTC, and a date without a time is read as 00:00 UTC on that day. Must be later than the time of the request and at most 6 calendar months from now. A past value returns `400` with the message `Validation failed: Expires at must be in the future`, and a value more than 6 months ahead returns `400` with `Validation failed: Expires at cannot be more than 6 months from now`. Returned in UTC.\n",
+            "example": "2026-12-15T12:00:00Z",
+            "x-glomo-relative-example": "P14D"
           },
           "last_reminder_sent_at": {
-            "type": "string",
-            "format": "timestamp",
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
             "readOnly": true,
-            "description": "Last time when the customer was reminded to complete the payment by  visiting the link\n",
-            "example": "2024-09-13T06:32:34.340Z"
+            "description": "When the customer was last reminded to complete the payment by visiting the link, as an ISO 8601 date-time in UTC. `null` if no reminder has been sent.\n",
+            "example": "2024-09-13T06:32:34Z"
           },
           "invoice_amount": {
             "type": "number",
-            "description": "The amount in cents for which invoice was generated. It can be more  than the amount requested in this payment_link\n",
+            "description": "The amount on the invoice, in the smallest unit of the payment link's `currency`, the same unit as `amount` (cents for USD). `1000` is $10.00 when `currency` is USD. Must be greater than or equal to `amount`.\n",
             "example": 1000
           },
           "payment_link": {
@@ -4302,16 +4754,16 @@
           },
           "created_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the payment_link was created\n",
+            "description": "When the payment link was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "updated_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the payment_link was last updated\n",
+            "description": "When the payment link was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "notes": {
@@ -4391,7 +4843,7 @@
           },
           "invoice_amount": {
             "type": "number",
-            "description": "The amount in cents for which invoice was generated. It can be more than the amount requested in this payment_link.\n",
+            "description": "The amount on the invoice, in the smallest unit of the quote's `destination_currency`, which is the currency the payment link is created in (cents for USD). `1000` is $10.00 when that currency is USD. Must be greater than or equal to the quote's `destination_amount`.\n",
             "example": 1000
           },
           "reference_number": {
@@ -4464,7 +4916,10 @@
                 "type": "string",
                 "readOnly": true,
                 "description": "The unique identifier for the payment link.\n",
-                "example": "payin_678a4c88hpAjf"
+                "example": "plink_678a4c88hpAjf"
+              },
+              "expires_at": {
+                "example": "2021-06-15T12:00:00Z"
               },
               "status": {
                 "type": "string",
@@ -4522,11 +4977,14 @@
                 "example": "https://staging-api.glomopay-eng.com/v1/payin/pl/8f31597d-e085-497a-b80f-ae97ea9422a0"
               },
               "last_reminder_sent_at": {
-                "type": "string",
-                "format": "timestamp",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
                 "readOnly": true,
-                "description": "Last time when the customer was reminded to complete the payment by visiting the link\n",
-                "example": "2024-09-13T06:32:34.340Z"
+                "description": "When the customer was last reminded to complete the payment by visiting the link, as an ISO 8601 date-time in UTC. `null` if no reminder has been sent.\n",
+                "example": "2024-09-13T06:32:34Z"
               },
               "payment_methods": {
                 "type": "array",
@@ -4588,16 +5046,16 @@
               },
               "created_at": {
                 "type": "string",
-                "format": "timestamp",
+                "format": "date-time",
                 "readOnly": true,
-                "description": "Timestamp representing when the payment_link was created\n",
+                "description": "When the payment link was created, as an ISO 8601 date-time in UTC.\n",
                 "example": "2021-06-01T12:00:00Z"
               },
               "updated_at": {
                 "type": "string",
-                "format": "timestamp",
+                "format": "date-time",
                 "readOnly": true,
-                "description": "Timestamp representing when the payment_link was last updated\n",
+                "description": "When the payment link was last updated, as an ISO 8601 date-time in UTC.\n",
                 "example": "2021-06-01T12:00:00Z"
               },
               "notes": {
@@ -4644,16 +5102,16 @@
           },
           "created_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the document was created\n",
+            "description": "When the document was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "updated_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the document was last updated\n",
+            "description": "When the document was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           }
         }
@@ -4670,25 +5128,25 @@
           "product_name": {
             "type": "string",
             "maxLength": 128,
-            "description": "Name of the product being subscribed to.",
+            "description": "Name of the product being subscribed to. Up to 128 characters, using only letters `A`–`Z` and `a`–`z`, digits, whitespace, hyphens, underscores, periods, commas, parentheses and ampersands. Accented letters and any other symbol are rejected. A value that breaks either rule returns `400` with a message such as `Product name contains invalid characters…` or `Product name is too long (maximum is 128 characters)`.\n",
             "example": "ShieldGuard Insurance"
           },
           "product_description": {
             "type": "string",
             "maxLength": 512,
-            "description": "Description of the product.",
+            "description": "Description of the product. Up to 512 characters. Allows the same characters as `product_name`, plus exclamation marks, colons, single quotes and asterisks; accented letters and any other symbol are rejected. A value that breaks either rule returns `400`.\n",
             "example": "Flexible monthly insurance for belongings travel and digital assets easy to manage"
           },
           "plan_name": {
             "type": "string",
             "maxLength": 128,
-            "description": "Name of the subscription plan.",
+            "description": "Name of the subscription plan. Optional. A non-blank value follows the same rules as `product_name`: up to 128 characters, and the same allowed characters.\n",
             "example": "ShieldGuard Lite"
           },
           "plan_description": {
             "type": "string",
             "maxLength": 512,
-            "description": "Description of the subscription plan.",
+            "description": "Description of the subscription plan. Optional. A non-blank value follows the same rules as `product_description`: up to 512 characters, and the same allowed characters.\n",
             "example": "Simple, monthly insurance plan that covers your basic belongings and key digital assets"
           },
           "amount": {
@@ -4706,13 +5164,13 @@
           "billing_cycles": {
             "type": "integer",
             "minimum": 2,
-            "description": "Total number of billing cycles for the subscription. Required for regular subscriptions, must not be provided for 'as_presented' subscriptions.\nA subscription can have a lifetime of 30 years.\nMaximum billing cycles therefore depend on interval:\n- Monthly (interval_type='month', interval_count=1): max 360 cycles\n- Quarterly (interval_type='month', interval_count=3): max 120 cycles\n- Half-yearly (interval_type='month', interval_count=6): max 60 cycles\n- Yearly (interval_type='year', interval_count=1): max 30 cycles\n",
+            "description": "Total number of billing cycles for the subscription. Required for regular subscriptions, must not be provided for 'as_presented' subscriptions.\nA subscription can have a lifetime of 30 years.\nMaximum billing cycles therefore depend on interval:\n- Monthly (interval_type='month', interval_count=1): max 360 cycles\n- Quarterly (interval_type='month', interval_count=3): max 120 cycles\n- Half-yearly (interval_type='month', interval_count=6): max 60 cycles\n- Yearly (interval_type='year', interval_count=1): max 30 cycles\n\nSend an integer of at least `2` as a JSON number; a string such as `\"12\"` is rejected. A value below\n`2` or above the interval's maximum returns `400`.\n",
             "example": 12
           },
           "max_amount": {
             "type": "integer",
             "minimum": 1,
-            "description": "Maximum allowed amount per payment for 'as_presented' subscriptions. Required when interval_type is 'as_presented', must not be provided for regular subscriptions.\nSubsequent payments on the subscription cannot exceed this amount.\n",
+            "description": "Maximum allowed amount per payment for `as_presented` subscriptions, in the smallest unit of `currency` (cents for USD). `5000` is $50.00 when `currency` is USD. A positive integer. Required when `interval_type` is `as_presented`, and must not be provided for regular subscriptions.\nSubsequent payments on the subscription cannot exceed this amount.\n",
             "example": 5000
           },
           "start_date": {
@@ -4724,8 +5182,9 @@
           "expires_at": {
             "type": "string",
             "format": "date",
-            "description": "Expiration date for the subscription payment link in UTC timezone and ISO 8601 format (YYYY-MM-DD). Must be today or later, and no more than one calendar month after today (UTC); otherwise the request is rejected with `400`. It is not compared with `start_date`.\n",
-            "example": "2025-01-07"
+            "description": "Expiration date for the subscription payment link in UTC timezone and ISO 8601 format (YYYY-MM-DD). Must be today (UTC) or later, and at most 1 calendar month after today (UTC). An earlier date returns `400` with the message `Validation failed: Expires at must be today or in the future`, and a later one returns `400` with `Validation failed: Expires at cannot be more than 1 months from today`. It is not compared with `start_date`.\n",
+            "example": "2026-10-15",
+            "x-glomo-relative-example": "P7D"
           },
           "notify_customer": {
             "type": "boolean",
@@ -4843,7 +5302,7 @@
               "integer",
               "null"
             ],
-            "description": "Total number of billing cycles for the subscription. Null for 'as_presented' subscriptions.",
+            "description": "Total number of billing cycles for the subscription. Each cycle lasts `interval_count` units of `interval_type`, so 12 cycles with `interval_count` 1 and `interval_type` `month` span 12 months. `null` for `as_presented` subscriptions.\n",
             "example": 12
           },
           "max_amount": {
@@ -4851,7 +5310,7 @@
               "integer",
               "null"
             ],
-            "description": "Maximum allowed amount per payment. Present only for 'as_presented' subscriptions, null for regular subscriptions.",
+            "description": "Maximum allowed amount per payment, in the smallest unit of `currency` (cents for USD). `5000` is $50.00 when `currency` is USD. Present only for `as_presented` subscriptions, `null` for regular subscriptions.\n",
             "example": 5000
           },
           "start_date": {
@@ -4887,8 +5346,8 @@
           "subscription_link_url": {
             "type": "string",
             "format": "uri",
-            "description": "URL for the subscription payment page. Your customer can use this URL to make the first payment and activate the subscription. The path is `/subscription-links/{id}`; in sandbox the URL ends with `?sandbox=true`.\n",
-            "example": "https://checkout.glomopay.com/subscription-links/sub_5JU9yv0lGSUP"
+            "description": "URL for the subscription payment page. Your customer can use this URL to make the first payment and activate the subscription. The path is `/subscription-links/{id}`; in sandbox the URL ends with `?sandbox=true`. The host depends on your account, so share the URL exactly as returned rather than building it yourself.\n",
+            "example": "https://your-dashboard-host.example/subscription-links/sub_5JU9yv0lGSUP"
           },
           "cancelled_at": {
             "type": [
@@ -4953,27 +5412,198 @@
           "bps": {
             "type": "number",
             "minimum": 1,
-            "description": "Basis points for the pricing.\n",
+            "description": "The percentage fee, in basis points: 1 basis point is 0.01%, so `1000` is 10%. Required when `pricing_type` is `percentage`, and must not be sent when it is `fixed`.\n",
             "example": 1000
           },
           "set_as_default": {
             "type": "boolean",
-            "description": "Set this pricing as default for the business. Overrides the previously set default if set to 'true'.\n",
-            "example": "true"
+            "description": "Set this pricing as default for the business. Overrides the previously set default if set to `true`.\n",
+            "example": true
           },
           "created_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the payin was created\n",
+            "description": "When the price was created, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
           },
           "updated_at": {
             "type": "string",
-            "format": "timestamp",
+            "format": "date-time",
             "readOnly": true,
-            "description": "Timestamp representing when the payin was last updated\n",
+            "description": "When the price was last updated, as an ISO 8601 date-time in UTC.\n",
             "example": "2021-06-01T12:00:00Z"
+          }
+        }
+      },
+      "LrsBank": {
+        "type": "object",
+        "description": "A bank your customers can remit from under LRS.\n",
+        "properties": {
+          "bank_code": {
+            "type": "string",
+            "description": "Code of the bank. Pass it as `bank_code` when you register an LRS bank account for a customer and when you create an LRS payin quote.\n",
+            "example": "hdfc"
+          },
+          "bank_name": {
+            "type": "string",
+            "description": "Display name of the bank.\n",
+            "example": "HDFC bank"
+          }
+        }
+      },
+      "LrsCustomerBankAccount": {
+        "type": "object",
+        "description": "The Indian bank account an LRS remittance is debited from. Pass its `id` as `lrs.bank_account_id` on an LRS order.\n",
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Unique identifier of the LRS bank account. It starts with `acclrs_`.\n",
+            "example": "acclrs_68468c03g9xt7"
+          },
+          "bank_code": {
+            "type": "string",
+            "description": "Code of the customer's bank. Must be a `bank_code` returned by `GET /lrs/banks` for your account, matched exactly and case-sensitively. An LRS order that uses this account must use a quote created for the same `bank_code`, or the order is rejected.\n",
+            "example": "hdfc"
+          },
+          "account_number": {
+            "type": "string",
+            "description": "The customer's account number at that bank. Digits only, with a length inside the range that bank accepts. Returned in full, as sent, in the response.\n",
+            "example": "12345678901234"
+          },
+          "bank_customer_id": {
+            "type": "string",
+            "description": "Optional. The customer's identifier at their bank. For banks that use one, it must contain only digits, with a length inside the range that bank accepts; an invalid value is rejected with `400`.\n",
+            "example": "12345678"
+          }
+        }
+      },
+      "CreateLrsQuoteRequest": {
+        "type": "object",
+        "properties": {
+          "resource": {
+            "type": "string",
+            "enum": [
+              "payin",
+              "payout"
+            ],
+            "default": "payin",
+            "description": "What the quote prices.\n\n- `payin` — an LRS remittance from a resident Indian customer. Requires `bank_code`.\n- `payout` — a withdrawal back to the customer in India. Only `USD` to `INR` is supported, and\n  `bank_code` must not be sent.\n",
+            "example": "payin"
+          },
+          "bank_code": {
+            "type": "string",
+            "description": "Code of the customer's bank, as returned by `GET /lrs/banks`. Required when `resource` is `payin`, and the bank must be enabled for your account. Rejected when `resource` is `payout`.\n",
+            "example": "hdfc"
+          },
+          "source_amount": {
+            "type": "integer",
+            "description": "The amount to convert, in the smallest unit of `source_currency` (paisa for INR, cents for USD). `4400000` is ₹44,000.00 when `source_currency` is `INR`. Must be a whole number; a string of digits such as `\"4400000\"` is also accepted. Send a positive integer; an optional leading sign is accepted. A decimal or an exponent is rejected with `400`. On a payin quote, the amount must fall within the minimum and maximum set for the bank, otherwise the request is rejected with `400` and the message states the limit.\n",
+            "example": 4400000
+          },
+          "source_currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "enum": [
+              "INR",
+              "USD"
+            ],
+            "description": "The currency of `source_amount`. Must differ from `target_currency`.\n",
+            "example": "INR"
+          },
+          "target_currency": {
+            "type": "string",
+            "format": "iso-4217",
+            "enum": [
+              "INR",
+              "USD"
+            ],
+            "description": "The currency to convert into. Must differ from `source_currency`.\n",
+            "example": "USD"
+          }
+        },
+        "required": [
+          "source_amount",
+          "source_currency",
+          "target_currency"
+        ]
+      },
+      "LrsQuote": {
+        "type": "object",
+        "description": "An LRS quote: the conversion, tax and exchange rate for an LRS remittance or withdrawal.\n",
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Unique identifier of the quote. Pass it as `lrs.lrs_quote_id` on an LRS order.\n",
+            "example": "quote_6ab60de4Kx7Pq"
+          },
+          "from": {
+            "type": "object",
+            "readOnly": true,
+            "description": "The amount the quote converts from: your `source_amount` and `source_currency`.\n",
+            "properties": {
+              "amount": {
+                "type": "integer",
+                "description": "Amount in the smallest unit of `currency` (paisa for INR, cents for USD).\n",
+                "example": 4400000
+              },
+              "currency": {
+                "type": "string",
+                "format": "iso-4217",
+                "example": "INR"
+              }
+            }
+          },
+          "to": {
+            "type": "object",
+            "readOnly": true,
+            "description": "The amount the quote converts to, in `target_currency`.\n\n- `INR` to `USD` payin quote: GST is deducted from `from.amount` before conversion, so\n  `to.amount` is the USD remitted.\n- `USD` to `INR` payin quote: `to.amount` is the INR equivalent of `from.amount`, plus any\n  transaction fee charged to the customer, with GST added.\n- Payout quote: `to.amount` is the INR the customer receives after fees and GST are deducted.\n\nOn a payin quote, the side in `USD` is the amount an LRS order must be created for.\n",
+            "properties": {
+              "amount": {
+                "type": "integer",
+                "description": "Amount in the smallest unit of `currency` (paisa for INR, cents for USD). `51763` is $517.63 when `currency` is `USD`.\n",
+                "example": 51763
+              },
+              "currency": {
+                "type": "string",
+                "format": "iso-4217",
+                "example": "USD"
+              }
+            }
+          },
+          "fx_rate": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The exchange rate applied to the quote, as a decimal string in INR per 1 USD. It is expressed this way whichever direction the quote converts.\n",
+            "example": "84.85"
+          },
+          "bank_code": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The `bank_code` the quote was created for. Present on payin quotes only.\n",
+            "example": "hdfc"
+          },
+          "total_tax": {
+            "type": "integer",
+            "readOnly": true,
+            "description": "GST on the conversion, in paisa, whichever direction the quote converts. `7906` is ₹79.06.\n",
+            "example": 7906
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "description": "When the quote expires, as an ISO 8601 date-time in UTC. Payout quotes expire 30 minutes after `created_at`. For payin quotes, rely on this value rather than a fixed duration. An LRS order created from the quote expires at the same time, and an order cannot be created from an expired quote.\n",
+            "example": "2026-09-25T06:30:04.113Z"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true,
+            "description": "When the quote was created, as an ISO 8601 date-time in UTC.\n",
+            "example": "2026-09-25T06:00:04.113Z"
           }
         }
       },
@@ -5046,7 +5676,7 @@
         "properties": {
           "amount": {
             "type": "number",
-            "description": "The fee amount in the smallest currency unit (cents), aggregated across all rules for this fee bearer. For example, 250 cents is $2.50.\n",
+            "description": "The fee amount in the smallest unit of this entry's `currency` (cents for USD), aggregated across all rules for this fee bearer. `250` is $2.50 when `currency` is USD.\n",
             "example": 250
           },
           "currency": {
@@ -5117,6 +5747,38 @@
           "description": "Flexible insurance for belongings travel and digital assets easy to manage"
         }
       },
+      "LrsOrderDetails": {
+        "type": "object",
+        "description": "Send this object to create an LRS order: a remittance from a customer resident in India, funded\nfrom their Indian bank account. If you send `lrs`, `lrs_quote_id` and `remittance_information` are\nrequired.\n\n- Create the quote first with `POST /lrs/quotes`. The order's `amount` must equal the `USD` side of\n  the quote (`from.amount` for a `USD` source quote, `to.amount` for an `INR` source quote), and\n  `currency` must be `USD`. Otherwise the order is rejected with `400`.\n- The quote must not have expired. The order expires when the quote does.\n- The customer's country must be India, otherwise the order is rejected with `400`.\n- An LRS order doesn't store `invoice_number`, `invoice_description`, `invoice_amount`,\n  `reference_number`, `document_id` or `product`; they come back as `null` or are left out. A value\n  you send is still validated, so leave these fields out.\n\nReturned on the order when it was created as an LRS order.\n",
+        "properties": {
+          "lrs_quote_id": {
+            "type": "string",
+            "description": "The `id` of a quote from `POST /lrs/quotes`, created by your account.\n",
+            "example": "quote_6ab60de4Kx7Pq"
+          },
+          "remittance_information": {
+            "type": "string",
+            "maxLength": 20,
+            "pattern": "^[a-zA-Z0-9-]*$",
+            "description": "Your reference for the remittance. Up to 20 characters, using only letters, digits and hyphens; spaces and other characters are rejected with `400`.\n",
+            "example": "REF12345"
+          },
+          "bank_account_id": {
+            "type": "string",
+            "description": "The `id` of the customer's LRS bank account, from `POST /customer/{id}/bank_account`. Optional. It must belong to this customer and be at the same bank as the quote's `bank_code`. A bank account from `POST /customer/{id}/bank-accounts` is not accepted here.\n",
+            "example": "acclrs_68468c03g9xt7"
+          },
+          "beneficiary_id": {
+            "type": "string",
+            "description": "The `id` of a beneficiary created with `category: lrs` through `POST /v2/beneficiaries`, to receive the remittance. Optional.\n",
+            "example": "bene_68468c03g9xua"
+          }
+        },
+        "required": [
+          "lrs_quote_id",
+          "remittance_information"
+        ]
+      },
       "Amount": {
         "type": "number",
         "description": "The amount in the smallest currency unit. For example, if the amount is $299.00, then 29900 is passed in  this field. In the case of three decimal currencies, such as KWD, BHD and OMR, to represent an amount of 295.991, pass the value as 295990. And in the case of zero decimal currencies such as JPY, for amount ￥295, pass the value as 295.\n",
@@ -5155,7 +5817,7 @@
         "properties": {
           "amount": {
             "type": "number",
-            "description": "The tax amount in the smallest currency unit (cents). For example, 1800 cents is $18.00.\n",
+            "description": "The tax amount in the smallest unit of this line's `currency` (cents for USD). `1800` is $18.00 when `currency` is USD.\n",
             "example": 1800
           },
           "currency": {
@@ -5182,20 +5844,18 @@
         "in": "query",
         "name": "before",
         "schema": {
-          "type": "string",
-          "format": "timestamp"
+          "type": "string"
         },
-        "description": "[ISO-8601](https://en.wikipedia.org/wiki/ISO_8601) timestamp in UTC to filter resources created before this time. Use this to avoid `Page drift` issue. See [Pagination parameters](/platform/pagination#parameters) for more details.\n",
+        "description": "Return only resources created at or before this time. Send an [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601) timestamp with an offset, such as `2025-02-18T12:03:44Z` or `2025-02-18T17:33:44+05:30`. A timestamp without an offset is read as UTC. A bare date (`YYYY-MM-DD`) means the end of that day in UTC (`23:59:59.999999Z`). An invalid value returns `400 Bad Request`. Use this to avoid page drift. See [Pagination parameters](/platform/pagination#parameters) for more details.\n",
         "example": "2025-02-18T12:03:44Z"
       },
       "AfterParam": {
         "in": "query",
         "name": "after",
         "schema": {
-          "type": "string",
-          "format": "timestamp"
+          "type": "string"
         },
-        "description": "[ISO-8601](https://en.wikipedia.org/wiki/ISO_8601) timestamp in UTC to filter resources created after this time. Use this to avoid `Page drift` issue. See [Pagination parameters](/platform/pagination#parameters) for more details.\n",
+        "description": "Return only resources created at or after this time. Send an [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601) timestamp with an offset, such as `2025-01-18T12:03:44Z` or `2025-01-18T17:33:44+05:30`. A timestamp without an offset is read as UTC. A bare date (`YYYY-MM-DD`) means the start of that day in UTC (`00:00:00Z`). An invalid value returns `400 Bad Request`. Use this to avoid page drift. See [Pagination parameters](/platform/pagination#parameters) for more details.\n",
         "example": "2025-01-18T12:03:44Z"
       },
       "PerPageParam": {

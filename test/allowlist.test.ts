@@ -11,6 +11,12 @@ describe('execution allowlist', () => {
     }
   });
 
+  it('includes the LRS operations the LRS remittance flow calls', () => {
+    for (const operationId of ['getLrsBanks', 'createLrsCustomerBankAccount', 'createLrsQuote']) {
+      expect(executionAllowlist.has(operationId)).toBe(true);
+    }
+  });
+
   it('keeps getMerchant', () => {
     expect(executionAllowlist.has('getMerchant')).toBe(true);
   });
