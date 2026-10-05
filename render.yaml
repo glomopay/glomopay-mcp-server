@@ -24,7 +24,8 @@ services:
         value: '2'
     healthCheckPath: /healthz
     # Only the custom domains reach the service; its onrender.com subdomain returns 404.
-    # Disabling the subdomain requires at least one custom domain.
+    # Disabling the subdomain requires at least one custom domain. A Blueprint sync makes this list the
+    # service's domains: keep mcp.glomopay.com while any client config still points at it.
     domains:
       - mcp.glomo.one
       - mcp.glomopay.com
