@@ -122,7 +122,7 @@ A limited request gets `429` with `Retry-After` and the `RateLimit` /
 for one instance; with more than one instance each counts separately, so a
 shared store is needed before scaling out. All execution calls leave from this
 service's own egress address, so together they also share whatever per-source
-limit the glomo API applies.
+limit the Glomo API applies.
 
 The client address comes from `X-Forwarded-For` only across `TRUST_PROXY_HOPS`
 trusted proxies; with none trusted (the default) the header is ignored.
