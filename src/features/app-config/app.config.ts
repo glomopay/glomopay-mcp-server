@@ -14,7 +14,9 @@ const MAX_TRUST_PROXY_HOPS = 5;
 export const ANTHROPIC_EGRESS_CIDRS = ['160.79.104.0/21', '2607:6bc0::/48'] as const;
 
 export const RATE_LIMIT_DEFAULTS = {
+  floodPerMinute: 1200,
   perMinute: 300,
+  merchantPerMinute: 600,
   executionPerMinute: 60,
   sharedEgressPerMinute: 3000,
 } as const;
@@ -72,7 +74,9 @@ export const config = {
     },
     get rateLimit() {
       return {
+        floodPerMinute: positiveInteger('RATE_LIMIT_FLOOD_PER_MINUTE', RATE_LIMIT_DEFAULTS.floodPerMinute),
         perMinute: positiveInteger('RATE_LIMIT_PER_MINUTE', RATE_LIMIT_DEFAULTS.perMinute),
+        merchantPerMinute: positiveInteger('RATE_LIMIT_MERCHANT_PER_MINUTE', RATE_LIMIT_DEFAULTS.merchantPerMinute),
         executionPerMinute: positiveInteger('RATE_LIMIT_EXECUTION_PER_MINUTE', RATE_LIMIT_DEFAULTS.executionPerMinute),
         sharedEgressCidrs: sharedEgressCidrs(),
         sharedEgressPerMinute: positiveInteger('RATE_LIMIT_SHARED_EGRESS_PER_MINUTE', RATE_LIMIT_DEFAULTS.sharedEgressPerMinute),

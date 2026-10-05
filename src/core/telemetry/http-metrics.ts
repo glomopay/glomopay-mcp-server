@@ -13,7 +13,7 @@ export type TRejectionReason =
   | 'bad_request'
   | 'internal';
 
-export type TRateLimiter = 'overall' | 'execution';
+export type TRateLimiter = 'flood' | 'caller' | 'execution';
 
 export interface IHttpMetrics {
   /** Attributes are `reason` and, for `rate_limited`, `limiter`. Never the client address, credential or path. */

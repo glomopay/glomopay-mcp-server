@@ -4,17 +4,19 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import { MCPServer } from '@/core/mcp-server/mcp-server.module';
 import type { IHttpMetrics } from '@/core/telemetry/telemetry.module';
-import { apiKeyAuthMiddleware } from '@/features/auth/auth.module';
+import { apiKeyAuthMiddleware, type CredentialVerifier } from '@/features/auth/auth.module';
 
 import { clientIpDiagnostic } from './client-ip-diagnostic';
 import { createRejecter, JSON_RPC_TRANSPORT_ERROR, jsonRpcErrorHandler, sendJsonRpcError } from './json-rpc-errors';
-import { executionRateLimit, overallRateLimit, type IRateLimitConfig } from './rate-limit';
+import { callerRateLimit, executionRateLimit, floodRateLimit, identifyCaller, type IRateLimitConfig } from './rate-limit';
 import { BODY_LIMIT_KB, checkEnvelope, parseJsonBody } from './request-envelope';
 
 const METHOD_NOT_ALLOWED_STATELESS = 'Method not allowed: this server runs stateless Streamable HTTP and only supports POST /mcp.';
 
 export interface IHttpServerOptions {
   metrics: IHttpMetrics;
+  /** The dispatcher's verifier: a verified merchant is rate-limited as itself, not by address. */
+  verifier: CredentialVerifier;
   /** Proxy hops in front of the app (Express `trust proxy`); 0 trusts none, so X-Forwarded-For is ignored. */
   trustProxyHops: number;
   rateLimit: IRateLimitConfig;
@@ -38,13 +40,15 @@ export function createHttpServer(mcpServer: MCPServer, options: IHttpServerOptio
   app.get('/healthz', health);
 
   if (options.clientIpDiagnostic) app.use('/mcp', clientIpDiagnostic(options.trustProxyHops));
-  app.use('/mcp', overallRateLimit(options.rateLimit, reject));
+  app.use('/mcp', floodRateLimit(options.rateLimit, reject));
 
   app.post(
     '/mcp',
     ...parseJsonBody(reject),
     checkEnvelope(reject, options.maxBatchMessages),
     apiKeyAuthMiddleware,
+    identifyCaller(options.verifier),
+    callerRateLimit(options.rateLimit, reject),
     executionRateLimit(options.rateLimit, reject),
     async (req, res) => {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });

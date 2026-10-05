@@ -76,29 +76,6 @@ file path:
 | Content-Type without `application/json`                     | `415` | `-32000`      |
 | Rate limited (see below)                                    | `429` | `-32000`      |
 
-### Rate limits
-
-Per client address (IPv6 grouped by /56), counted per minute:
-
-- every request to `/mcp`: `RATE_LIMIT_PER_MINUTE` (300). Addresses in
-  `RATE_LIMIT_SHARED_EGRESS_CIDRS` get `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE`
-  (3000) instead: hosted MCP clients such as claude.ai send every user's calls
-  from a few shared addresses. The default ranges are Anthropic's published
-  egress ranges (https://platform.claude.com/docs/en/api/ip-addresses).
-- execution calls (`glomo_api_read`, `glomo_api_write`), additionally:
-  `RATE_LIMIT_EXECUTION_PER_MINUTE` (60) per credential, so one credential is
-  one budget whatever address it comes from (per address when none is sent).
-
-A limited request gets `429` with `Retry-After` and the `RateLimit` /
-`RateLimit-Policy` headers (IETF draft 8). Counters are in memory, which is exact
-for one instance; with more than one instance each counts separately, so a
-shared store is needed before scaling out. All execution calls leave from this
-service's own egress address, so together they also share whatever per-source
-limit the glomo API applies.
-
-The client address comes from `X-Forwarded-For` only across `TRUST_PROXY_HOPS`
-trusted proxies; with none trusted (the default) the header is ignored.
-
 A credential is required only for the execution tools (`glomo_api_read`,
 `glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
 an agent can find and inspect operations before it holds a key.
@@ -116,6 +93,38 @@ refused before any downstream request. A request with no credential still reache
 discovery and `tools/list`; the execution tools fail closed. The server holds no private key.
 Verification is isolated behind a single seam
 (`src/features/auth/credential-resolver.ts`).
+
+### Rate limits
+
+Three limits, each counted per minute (client addresses group IPv6 by /56):
+
+- **Flood guard**, every request to `/mcp` per client address, verified or not,
+  before the body is read: `RATE_LIMIT_FLOOD_PER_MINUTE` (1200).
+- **Per caller**, every request:
+  - a caller whose credential passes verification is budgeted per merchant (the
+    credential's `sub`), wherever it calls from: `RATE_LIMIT_MERCHANT_PER_MINUTE`
+    (600). Its address budget does not apply.
+  - anyone else (no credential, or one that fails verification) is budgeted per
+    client address: `RATE_LIMIT_PER_MINUTE` (300). A made-up token never earns a
+    budget of its own.
+  - Addresses in `RATE_LIMIT_SHARED_EGRESS_CIDRS` get
+    `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE` (3000) instead of the per-address and
+    flood limits: hosted MCP clients such as claude.ai send every user's calls
+    from a few shared addresses. The default ranges are Anthropic's published
+    egress ranges (https://platform.claude.com/docs/en/api/ip-addresses).
+- **Execution** calls (`glomo_api_read`, `glomo_api_write`), additionally:
+  `RATE_LIMIT_EXECUTION_PER_MINUTE` (60), keyed the same way (per merchant, or
+  per address without a verified credential).
+
+A limited request gets `429` with `Retry-After` and the `RateLimit` /
+`RateLimit-Policy` headers (IETF draft 8). Counters are in memory, which is exact
+for one instance; with more than one instance each counts separately, so a
+shared store is needed before scaling out. All execution calls leave from this
+service's own egress address, so together they also share whatever per-source
+limit the glomo API applies.
+
+The client address comes from `X-Forwarded-For` only across `TRUST_PROXY_HOPS`
+trusted proxies; with none trusted (the default) the header is ignored.
 
 ## Configuration
 
@@ -135,8 +144,10 @@ HTTP surface:
 | Variable                              | Default                   | Description                                                                                                                                                                                     |
 | ------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `TRUST_PROXY_HOPS`                    | `0`                       | Proxies in front of the app that append to `X-Forwarded-For` (Express `trust proxy`), 0–5. Required on Render (`3`); the app refuses to start there without it, and on any invalid value.       |
-| `RATE_LIMIT_PER_MINUTE`               | `300`                     | Requests to `/mcp` per client address per minute.                                                                                                                                               |
-| `RATE_LIMIT_EXECUTION_PER_MINUTE`     | `60`                      | Execution calls per credential per minute.                                                                                                                                                      |
+| `RATE_LIMIT_FLOOD_PER_MINUTE`         | `1200`                    | Flood guard: requests to `/mcp` per client address per minute, verified or not.                                                                                                                 |
+| `RATE_LIMIT_PER_MINUTE`               | `300`                     | Requests per client address per minute from callers without a verified credential.                                                                                                              |
+| `RATE_LIMIT_MERCHANT_PER_MINUTE`      | `600`                     | Requests per verified merchant per minute, from any address.                                                                                                                                    |
+| `RATE_LIMIT_EXECUTION_PER_MINUTE`     | `60`                      | Execution calls per verified merchant (or per address without one) per minute.                                                                                                                  |
 | `RATE_LIMIT_SHARED_EGRESS_CIDRS`      | Anthropic's egress ranges | Comma-separated CIDR ranges that get the shared-egress budget. Empty turns it off.                                                                                                              |
 | `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE` | `3000`                    | Requests to `/mcp` per minute for an address in those ranges.                                                                                                                                   |
 | `CLIENT_IP_DIAGNOSTIC`                | off                       | `1` logs one `client ip diagnostic` line for the first request after boot: where `True-Client-IP` sits in `X-Forwarded-For` and the hop count that implies. It never logs an address or header. |

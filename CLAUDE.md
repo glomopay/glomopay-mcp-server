@@ -90,8 +90,9 @@ Do not weaken these without an explicit security review.
   `X-Forwarded-For`. The app refuses to start on Render without it.
 - Requests rejected before the MCP transport (bad body, rate limit) never reach analytics; they are counted in
   `mcp.http.rejected` only, with no client address, credential or path as an attribute.
-- The rate limiter keys execution calls on a SHA-256 of the bearer, in memory only; it never verifies, logs or
-  attributes by it. Verification and attribution stay in `CredentialVerifier`.
+- Rate limits key a caller on the merchant (`sub`) only after `CredentialVerifier` accepts its credential;
+  anything unverified is keyed by client address. Never key on a raw or decoded-but-unverified bearer, so a
+  made-up token can't mint a bucket. The key stays in memory and never reaches a log or metric.
 
 ## Public-repo hygiene
 

@@ -137,5 +137,5 @@ export async function createApp({
   mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
   mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
 
-  return createHttpServer(mcpServer, { ...httpOptions, metrics: createHttpMetrics() });
+  return createHttpServer(mcpServer, { ...httpOptions, verifier, metrics: createHttpMetrics() });
 }

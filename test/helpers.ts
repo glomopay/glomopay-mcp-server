@@ -51,7 +51,13 @@ export interface ITestServerOptions {
   env?: Record<string, string | undefined>;
 }
 
-const UNREACHED_RATE_LIMIT = { perMinute: 1_000_000, executionPerMinute: 1_000_000, sharedEgressPerMinute: 1_000_000 };
+const UNREACHED_RATE_LIMIT = {
+  floodPerMinute: 1_000_000,
+  perMinute: 1_000_000,
+  merchantPerMinute: 1_000_000,
+  executionPerMinute: 1_000_000,
+  sharedEgressPerMinute: 1_000_000,
+};
 
 function withEnv<T>(env: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
   const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));

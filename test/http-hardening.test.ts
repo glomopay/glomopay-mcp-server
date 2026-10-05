@@ -1,5 +1,6 @@
 import { logRecords, metricExporter, metricReader } from './otel-setup';
 
+import { generateKeyPairSync } from 'node:crypto';
 import { connect } from 'node:net';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -14,7 +15,9 @@ import {
   isRefused,
   jwt,
   postRaw,
+  signApiKey,
   startBrokenUpstream,
+  TEST_AUDIENCE,
   startTestServer,
   type IFakeUpstream,
   type IRawResponse,
@@ -23,8 +26,21 @@ import {
 } from './helpers';
 
 const MIXPANEL_TOKEN = 'mixpanel-test-project-token';
-const SANDBOX_KEY = jwt('sandbox', { sub: 'merch_4f9a8b7c6d5e' });
-const OTHER_SANDBOX_KEY = jwt('sandbox', { sub: 'merch_7a1b2c3d4e5f' });
+const MERCHANT_A = 'merch_4f9a8b7c6d5e';
+const MERCHANT_B = 'merch_7a1b2c3d4e5f';
+const SANDBOX_KEY = jwt('sandbox', { sub: MERCHANT_A });
+const MERCHANT_A_KEY = SANDBOX_KEY;
+/** A second, distinct credential for the same merchant. */
+const MERCHANT_A_SECOND_KEY = jwt('sandbox', { sub: MERCHANT_A, jti: 'second-credential' });
+const MERCHANT_B_KEY = jwt('sandbox', { sub: MERCHANT_B });
+const GARBAGE_TOKEN = 'not-a-credential';
+/** Claims merchant A but is signed with a key the server does not trust. */
+const FOREIGN_KEY_CLAIMING_A = signApiKey(
+  { sub: MERCHANT_A, env: 'sandbox', aud: TEST_AUDIENCE, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 },
+  generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey,
+);
+/** Claims merchant A with no signature at all. */
+const UNSIGNED_CLAIMING_A = `${MERCHANT_A_KEY.split('.').slice(0, 2).join('.')}.`;
 
 const TOOLS_LIST = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
 const OVERSIZED = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { pad: 'x'.repeat(150 * 1024) } });
@@ -131,6 +147,12 @@ function postWithoutBody(url: string): Promise<IRawResponse> {
 }
 
 const toolsList = (app: ITestServer, headers?: Record<string, string>) => postRaw(app.url, TOOLS_LIST, headers);
+
+const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
+
+const READ_PAYOUT_CALL = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'glomo_api_read', arguments: READ_PAYOUT } });
+const readPayout = (app: ITestServer, token: string, headers: Record<string, string> = {}) =>
+  postRaw(app.url, READ_PAYOUT_CALL, { ...bearer(token), ...headers });
 
 describe('error responses', () => {
   it('answers malformed JSON with a JSON-RPC parse error and no stack or path', async () => {
@@ -261,9 +283,9 @@ describe('error responses', () => {
 });
 
 describe('rate limiting', () => {
-  it('answers past the overall budget with a 429, Retry-After and RateLimit headers', async () => {
+  it('answers past the per-address budget with a 429, Retry-After and RateLimit headers', async () => {
     const app = await server({ rateLimit: { perMinute: 3 } });
-    const before = await rejectedCount({ reason: 'rate_limited', limiter: 'overall' });
+    const before = await rejectedCount({ reason: 'rate_limited', limiter: 'caller' });
 
     expect(await statuses(3, () => toolsList(app))).toEqual([200, 200, 200]);
     const limited = await toolsList(app);
@@ -272,50 +294,26 @@ describe('rate limiting', () => {
     const retryAfter = Number(limited.headers.get('retry-after'));
     expect(retryAfter).toBeGreaterThan(0);
     expect(retryAfter).toBeLessThanOrEqual(60);
-    expect(limited.headers.get('ratelimit')).toContain('"overall"');
+    expect(limited.headers.get('ratelimit')).toContain('"caller"');
     expect(limited.headers.get('ratelimit-policy')).toContain('q=3; w=60');
     expect(jsonRpcError(limited)).toEqual({ code: -32000, message: `Too Many Requests: retry after ${retryAfter} seconds` });
-    expect(await rejectedCount({ reason: 'rate_limited', limiter: 'overall' })).toBe(before + 1);
+    expect(await rejectedCount({ reason: 'rate_limited', limiter: 'caller' })).toBe(before + 1);
   });
 
-  it('gives execution calls their own, smaller budget while discovery keeps working', async () => {
-    const app = await server({ rateLimit: { perMinute: 100, executionPerMinute: 2 } });
-    const before = await rejectedCount({ reason: 'rate_limited', limiter: 'execution' });
+  it('caps every address with the flood guard in front, verified merchants included', async () => {
+    const app = await server({ rateLimit: { floodPerMinute: 3, merchantPerMinute: 100 } });
+    const before = await rejectedCount({ reason: 'rate_limited', limiter: 'flood' });
 
-    for (let i = 0; i < 2; i++) expect(isRefused(await callTool(app.url, 'glomo_api_read', READ_PAYOUT, SANDBOX_KEY))).toBe(false);
-    const limited = await postRaw(
-      app.url,
-      JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'glomo_api_read', arguments: READ_PAYOUT } }),
-      { Authorization: `Bearer ${SANDBOX_KEY}` },
-    );
+    expect(await statuses(3, () => toolsList(app, bearer(MERCHANT_A_KEY)))).toEqual([200, 200, 200]);
+    const limited = await toolsList(app, bearer(MERCHANT_B_KEY));
 
     expect(limited.status).toBe(429);
-    expect(limited.headers.get('ratelimit')).toContain('"execution"');
-    expect(isRefused(await callTool(app.url, 'glomo_api_search', { query: 'payout' }))).toBe(false);
-    expect(await rejectedCount({ reason: 'rate_limited', limiter: 'execution' })).toBe(before + 1);
+    expect(limited.headers.get('ratelimit')).toContain('"flood"');
+    expect(await rejectedCount({ reason: 'rate_limited', limiter: 'flood' })).toBe(before + 1);
   });
 
-  it('budgets execution per credential: two credentials from one address each get their own budget', async () => {
-    const app = await server({ rateLimit: { executionPerMinute: 1 } });
-
-    expect(isRefused(await callTool(app.url, 'glomo_api_read', READ_PAYOUT, SANDBOX_KEY))).toBe(false);
-    expect(isRefused(await callTool(app.url, 'glomo_api_read', READ_PAYOUT, OTHER_SANDBOX_KEY))).toBe(false);
-  });
-
-  it('budgets execution per credential: one credential from two addresses shares one budget', async () => {
-    const app = await server({ trustProxyHops: 1, rateLimit: { executionPerMinute: 1 } });
-    const read = (address: string) =>
-      postRaw(app.url, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'glomo_api_read', arguments: READ_PAYOUT } }), {
-        Authorization: `Bearer ${SANDBOX_KEY}`,
-        ...from(address),
-      });
-
-    expect((await read('192.0.2.10')).status).toBe(200);
-    expect((await read('192.0.2.11')).status).toBe(429);
-  });
-
-  it('counts malformed and oversized bodies against the overall budget', async () => {
-    const app = await server({ rateLimit: { perMinute: 2 } });
+  it('counts malformed and oversized bodies against the flood guard', async () => {
+    const app = await server({ rateLimit: { floodPerMinute: 2 } });
     await postRaw(app.url, '{"jsonrpc":');
     await postRaw(app.url, OVERSIZED);
 
@@ -323,7 +321,7 @@ describe('rate limiting', () => {
   });
 
   it('never limits the health check', async () => {
-    const app = await server({ rateLimit: { perMinute: 1 } });
+    const app = await server({ rateLimit: { floodPerMinute: 1, perMinute: 1 } });
     const health = app.url.replace('/mcp', '/healthz');
 
     expect(await statuses(5, () => fetch(health).then(async (r) => ({ status: r.status, headers: r.headers, text: await r.text() })))).toEqual(
@@ -331,13 +329,25 @@ describe('rate limiting', () => {
     );
   });
 
+  it('gives execution calls their own, smaller budget while discovery keeps working', async () => {
+    const app = await server({ rateLimit: { executionPerMinute: 2 } });
+    const before = await rejectedCount({ reason: 'rate_limited', limiter: 'execution' });
+
+    for (let i = 0; i < 2; i++) expect((await readPayout(app, MERCHANT_A_KEY)).status).toBe(200);
+    const limited = await readPayout(app, MERCHANT_A_KEY);
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('ratelimit')).toContain('"execution"');
+    expect(isRefused(await callTool(app.url, 'glomo_api_search', { query: 'payout' }, MERCHANT_A_KEY))).toBe(false);
+    expect(await rejectedCount({ reason: 'rate_limited', limiter: 'execution' })).toBe(before + 1);
+  });
+
   it('records no tool event and makes no upstream call for a rate-limited tools/call', async () => {
-    const app = await server({ rateLimit: { perMinute: 2 } });
+    const app = await server({ rateLimit: { merchantPerMinute: 2 } });
     const mixpanel = captureMixpanel();
     const reachedBefore = upstream.requests.length;
 
-    const outcomes = [];
-    for (let i = 0; i < 4; i++) outcomes.push(await callTool(app.url, 'glomo_api_read', READ_PAYOUT, SANDBOX_KEY).catch(() => 'rejected'));
+    expect(await statuses(4, () => readPayout(app, MERCHANT_A_KEY))).toEqual([200, 200, 429, 429]);
     await flushApps();
 
     expect(upstream.requests.length).toBe(reachedBefore + 2);
@@ -375,6 +385,79 @@ describe('rate limiting', () => {
     expect(await statuses(2, () => toolsList(app, from('2001:db8:0:1::1')))).toEqual([200, 200]);
     expect((await toolsList(app, from('2001:db8:0:2::1'))).status).toBe(429);
     expect((await toolsList(app, from('2001:db8:1:0::1'))).status).toBe(200);
+  });
+});
+
+describe('rate limiting per verified merchant', () => {
+  it('gives two verified merchants calling from one address separate budgets', async () => {
+    const app = await server({ rateLimit: { perMinute: 2, merchantPerMinute: 2 } });
+
+    expect(await statuses(2, () => toolsList(app, bearer(MERCHANT_A_KEY)))).toEqual([200, 200]);
+    expect(await statuses(2, () => toolsList(app, bearer(MERCHANT_B_KEY)))).toEqual([200, 200]);
+    expect((await toolsList(app, bearer(MERCHANT_A_KEY))).status).toBe(429);
+  });
+
+  it('shares one budget for one merchant calling from two addresses, with different credentials', async () => {
+    const app = await server({ trustProxyHops: 1, rateLimit: { perMinute: 2, merchantPerMinute: 2 } });
+
+    expect((await toolsList(app, { ...bearer(MERCHANT_A_KEY), ...from('192.0.2.10') })).status).toBe(200);
+    expect((await toolsList(app, { ...bearer(MERCHANT_A_SECOND_KEY), ...from('192.0.2.11') })).status).toBe(200);
+    expect((await toolsList(app, { ...bearer(MERCHANT_A_KEY), ...from('192.0.2.12') })).status).toBe(429);
+  });
+
+  it('replaces the per-address budget for a verified merchant, with its own limit', async () => {
+    const app = await server({ rateLimit: { perMinute: 1, merchantPerMinute: 3 } });
+
+    expect(await statuses(2, () => toolsList(app))).toEqual([200, 429]);
+    expect(await statuses(4, () => toolsList(app, bearer(MERCHANT_A_KEY)))).toEqual([200, 200, 200, 429]);
+  });
+
+  it('budgets an unverifiable bearer by address: new tokens never mint new buckets, and a verified merchant there keeps its own', async () => {
+    const app = await server({ rateLimit: { perMinute: 3, merchantPerMinute: 2 } });
+    const unverified = [GARBAGE_TOKEN, 'another-made-up-token', FOREIGN_KEY_CLAIMING_A, UNSIGNED_CLAIMING_A];
+
+    expect(await statuses(4, (i) => toolsList(app, bearer(unverified[i])))).toEqual([200, 200, 200, 429]);
+    expect((await toolsList(app)).status).toBe(429);
+    // A token that only claims merchant A spent the address budget, not A's.
+    expect(await statuses(3, () => toolsList(app, bearer(MERCHANT_A_KEY)))).toEqual([200, 200, 429]);
+  });
+
+  it('gives two verified merchants from one address separate execution budgets', async () => {
+    const app = await server({ rateLimit: { executionPerMinute: 1 } });
+
+    expect((await readPayout(app, MERCHANT_A_KEY)).status).toBe(200);
+    expect((await readPayout(app, MERCHANT_B_KEY)).status).toBe(200);
+    expect((await readPayout(app, MERCHANT_A_KEY)).status).toBe(429);
+  });
+
+  it('shares one execution budget for one merchant across addresses and credentials', async () => {
+    const app = await server({ trustProxyHops: 1, rateLimit: { executionPerMinute: 1 } });
+
+    expect((await readPayout(app, MERCHANT_A_KEY, from('192.0.2.10'))).status).toBe(200);
+    expect((await readPayout(app, MERCHANT_A_SECOND_KEY, from('192.0.2.11'))).status).toBe(429);
+  });
+
+  it('budgets execution calls with unverifiable bearers by address', async () => {
+    const app = await server({ rateLimit: { executionPerMinute: 2 } });
+
+    expect(await statuses(3, (i) => readPayout(app, [GARBAGE_TOKEN, 'another-made-up-token', FOREIGN_KEY_CLAIMING_A][i]))).toEqual([200, 200, 429]);
+    expect((await readPayout(app, MERCHANT_A_KEY)).status).toBe(200);
+  });
+
+  it('puts no merchant id or credential in any log or metric', async () => {
+    const app = await server({ rateLimit: { merchantPerMinute: 1, executionPerMinute: 1 } });
+    await statuses(3, () => readPayout(app, MERCHANT_A_KEY));
+    await statuses(2, () => toolsList(app, bearer(MERCHANT_B_KEY)));
+
+    await metricReader.forceFlush();
+    const telemetry = JSON.stringify({
+      metrics: metricExporter
+        .getMetrics()
+        .flatMap((resource) => resource.scopeMetrics.flatMap((scope) => scope.metrics.filter((m) => m.descriptor.name === 'mcp.http.rejected'))),
+      logs: logRecords.getFinishedLogRecords().map((record) => ({ body: record.body, attributes: record.attributes })),
+    });
+    for (const secret of [MERCHANT_A, MERCHANT_B, MERCHANT_A_KEY.split('.')[2], MERCHANT_B_KEY.split('.')[2]])
+      expect(telemetry).not.toContain(secret);
   });
 });
 
