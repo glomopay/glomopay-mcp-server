@@ -22,5 +22,10 @@ services:
       # Render without it. Verify it on every hostname with CLIENT_IP_DIAGNOSTIC=1 (README.md, Deployment).
       - key: TRUST_PROXY_HOPS
         value: '3'
-    # The health check path (GET /healthz) is set in a follow-up change, once a deploy serving it is live:
-    # setting it in the same change could health-check the running instance before it serves the route.
+    healthCheckPath: /healthz
+    # Only the custom domains reach the service; its onrender.com subdomain returns 404.
+    # Disabling the subdomain requires at least one custom domain.
+    domains:
+      - mcp.glomo.one
+      - mcp.glomopay.com
+    renderSubdomainPolicy: disabled
