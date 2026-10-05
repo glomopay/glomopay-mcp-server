@@ -32,9 +32,9 @@ export class ImplementationPlannerTool extends BaseTool {
     if (!guide) {
       this.config = {
         name: 'glomo_implementation_planner',
-        title: 'glomo Implementation Planner',
+        title: 'Glomo Implementation Planner',
         description:
-          'Not available yet: the glomo integration planner has no authored flows to read on this server and does not return a plan. Use glomo_docs_search and the published glomo skills to assemble the call order. No credential required.',
+          'Not available yet: the Glomo integration planner has no authored flows to read on this server and does not return a plan. Use glomo_docs_search and the published Glomo skills to assemble the call order. No credential required.',
         inputSchema: {
           goal: z.string().min(1).max(500).describe('The integration goal in plain language, e.g. "accept card payments from US customers".'),
         },
@@ -46,9 +46,9 @@ export class ImplementationPlannerTool extends BaseTool {
     const ids = guide.flows.map((flow) => flow.id) as [string, ...string[]];
     this.config = {
       name: 'glomo_implementation_planner',
-      title: 'glomo Implementation Planner',
+      title: 'Glomo Implementation Planner',
       description:
-        "Return glomo's authored, ordered API call sequence for an integration flow, copied verbatim from the Get started page of the docs. " +
+        "Return Glomo's authored, ordered API call sequence for an integration flow, copied verbatim from the Get started page of the docs. " +
         `Pass \`flow\` to get the plan: ${guide.flows.map((flow) => `${flow.id} (${flow.title})`).join(', ')}. ` +
         'Pass `goal` instead to get the flows that best match it, then call again with the chosen `flow`. ' +
         'Each API step names its operationId; read it with glomo_api_details before calling. Steps are never invented: a goal with no authored flow says so. No credential required.',

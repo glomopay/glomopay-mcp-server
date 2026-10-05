@@ -20,9 +20,9 @@ export class SampleRequestTool extends BaseTool {
 
     this.config = {
       name: 'glomo_sample_request',
-      title: 'glomo Sample Request',
+      title: 'Glomo Sample Request',
       description:
-        'Generate a ready-to-run sample request (cURL, Python or Node) for a glomo API operation, built from the real OpenAPI schema and its examples. The credential is read from a GLOMO_API_KEY environment variable placeholder; no credential is used or required to call this tool. Sandbox and live share the same base URL — the API key selects the environment, so there is no separate sandbox host.',
+        'Generate a ready-to-run sample request (cURL, Python or Node) for a Glomo API operation, built from the real OpenAPI schema and its examples. The credential is read from a GLOMO_API_KEY environment variable placeholder; no credential is used or required to call this tool. Sandbox and live share the same base URL — the API key selects the environment, so there is no separate sandbox host.',
       inputSchema: {
         operationId: z
           .string()

@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-If you believe you have found a security vulnerability in the Glomopay MCP
+If you believe you have found a security vulnerability in the Glomo MCP
 server, please report it privately. **Do not open a public GitHub issue for
 security reports.**
 
@@ -16,14 +16,14 @@ We will acknowledge your report and keep you informed of progress toward a fix.
 
 ## Scope
 
-This repository is the MCP server that proxies the Glomopay external API. In
+This repository is the MCP server that proxies the Glomo external API. In
 scope: the tool surface, the request dispatcher, the allowlist, and the auth
-boundary. Vulnerabilities in the underlying Glomopay API itself should be
+boundary. Vulnerabilities in the underlying Glomo API itself should be
 reported through the same channel.
 
 ## Handling of credentials
 
-This server uses API-key pass-through: each caller supplies their own Glomopay
+This server uses API-key pass-through: each caller supplies their own Glomo
 secret as a per-request bearer token. The server stores no long-lived
 credentials.
 

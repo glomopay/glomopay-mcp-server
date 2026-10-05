@@ -21,9 +21,9 @@ export class ApiReadTool extends BaseTool {
 
     this.config = {
       name: 'glomo_api_read',
-      title: 'glomo API Read',
+      title: 'Glomo API Read',
       description:
-        "Execute a read-only (GET) glomo API operation by operationId against the caller's account. Only allowlisted GET operations are permitted.",
+        "Execute a read-only (GET) Glomo API operation by operationId against the caller's account. Only allowlisted GET operations are permitted.",
       inputSchema: {
         operationId,
         params: z.record(z.string(), z.unknown()).optional().describe('Path and query parameters, flattened into a single object.'),

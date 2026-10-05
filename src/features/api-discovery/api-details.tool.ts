@@ -16,9 +16,9 @@ export class ApiDetailsTool extends BaseTool {
 
     this.config = {
       name: 'glomo_api_details',
-      title: 'glomo API Details',
+      title: 'Glomo API Details',
       description:
-        'Return the full definition of one or more glomo API operations by operationId: method, path, summary, parameters, request body schema and response schemas with examples. Documentation-only operations are returned with `executable: false`. Use glomo_api_search first to discover operationIds. No credential required.',
+        'Return the full definition of one or more Glomo API operations by operationId: method, path, summary, parameters, request body schema and response schemas with examples. Documentation-only operations are returned with `executable: false`. Use glomo_api_search first to discover operationIds. No credential required.',
       inputSchema: {
         operationIds: z
           .array(z.string().min(1).max(100))

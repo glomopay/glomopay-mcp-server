@@ -12,7 +12,7 @@ const BEARER_PREFIX = 'Bearer ';
 
 /**
  * Parses `Authorization: Bearer <glomopay-secret>` when present and exposes it to tools as
- * `extra.authInfo.token`. The bearer IS the downstream Glomopay secret (API-key pass-through)
+ * `extra.authInfo.token`. The bearer IS the downstream Glomo secret (API-key pass-through)
  * — the server proxies calls under the caller's own key. It never rejects a request: the
  * discovery tools and `tools/list` are usable without a credential, and the read/write tools
  * fail closed in the dispatcher when no credential is present.
