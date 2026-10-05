@@ -16,9 +16,9 @@ export const TEST_AUDIENCE = 'glomo-mcp';
 const testKeyPair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 export const TEST_PUBLIC_KEY = testKeyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 
-// The server verifies against the real glomo key in record mode; test-signed
+// The server verifies against the real Glomo key in record mode; test-signed
 // tokens are only accepted in lockdown replay. Re-recording execution cassettes
-// therefore needs a real MCP credential issued by glomo, not a test token.
+// therefore needs a real MCP credential issued by Glomo, not a test token.
 const AUTH_PUBLIC_KEY = process.env.GLOMO_MCP_PUBLIC_KEY ?? TEST_PUBLIC_KEY;
 const AUTH_AUDIENCE = process.env.GLOMO_MCP_AUDIENCE ?? TEST_AUDIENCE;
 
@@ -141,7 +141,7 @@ function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-// Sign an MCP credential the way glomo will: RS256, aud = the MCP audience, no
+// Sign an MCP credential the way Glomo will: RS256, aud = the MCP audience, no
 // scope or purpose claim (every credential is read_write for now). Callers override
 // any claim via `extra` (e.g. a wrong aud, a foreign key).
 export function jwtToken(env?: string, extra: Record<string, unknown> = {}): string {

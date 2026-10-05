@@ -5,7 +5,7 @@ import { BaseTool } from '@/shared/tool/tool.module';
 import type { ToolCallObserver } from '@/core/telemetry/telemetry.module';
 
 export class MCPServer {
-  private static SERVER_NAME = 'glomopay';
+  private static SERVER_NAME = 'glomo';
   private static SERVER_VERSION = '1.0.0';
 
   private tools: BaseTool[] = [];

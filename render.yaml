@@ -12,7 +12,7 @@ services:
       # Pin the Node version (kept in sync with .nvmrc; >= 22.12 for the vite/vitest toolchain).
       - key: NODE_VERSION
         value: 22.12.0
-      # Downstream Glomopay base host (no /api/v1 — the server appends it).
+      # Downstream Glomo base host (no /api/v1 — the server appends it).
       # Set the value in the Render dashboard, not in git.
       - key: API_HOST
         sync: false

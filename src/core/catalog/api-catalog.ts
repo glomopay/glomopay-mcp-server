@@ -187,7 +187,7 @@ export class ApiCatalog {
     return (
       this.byId.get(operationId) ?? {
         operationId,
-        error: `Unknown operationId "${operationId}": not a documented glomo operation.`,
+        error: `Unknown operationId "${operationId}": not a documented Glomo operation.`,
       }
     );
   }

@@ -30,7 +30,7 @@ export interface ICreateAppOptions {
   analyticsFlushIntervalMs?: number;
   /** Upper bound on one analytics request. */
   analyticsTimeoutMs?: number;
-  /** Upper bound on a downstream glomo API call. */
+  /** Upper bound on a downstream Glomo API call. */
   downstreamTimeoutMs?: number;
 }
 

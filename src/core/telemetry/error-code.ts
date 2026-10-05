@@ -15,7 +15,7 @@ export type TErrorCode = (typeof ERROR_CODES)[number];
 
 const TIMEOUT_CODES = new Set(['ECONNABORTED', 'ETIMEDOUT', 'ESOCKETTIMEDOUT']);
 
-/** Classifies a failed downstream glomo call by its HTTP status, or its transport error when there is none. */
+/** Classifies a failed downstream Glomo call by its HTTP status, or its transport error when there is none. */
 export function errorCodeForUpstream({ statusCode, code }: { statusCode?: number; code?: string }): TErrorCode {
   if (statusCode === 401 || statusCode === 403) return 'auth_rejected';
   if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) return 'upstream_4xx';

@@ -1,6 +1,6 @@
-# glomo MCP server
+# Glomo MCP server
 
-Stateless Streamable HTTP MCP server that proxies the glomo external API under the
+Stateless Streamable HTTP MCP server that proxies the Glomo external API under the
 caller's own credential. Tool surface, env vars and deployment are in README.md.
 
 ## Commands
@@ -93,5 +93,7 @@ Do not weaken these without an explicit security review.
 
 ## Naming and PRs
 
+- Prose writes the company name as "Glomo" (capital G): tool titles and descriptions, messages, docs and comments.
+  Identifiers keep their existing case.
 - Tool names use the `glomo_*` prefix (`glomo_api_read`, `glomo_api_write`, `glomo_api_search`, `glomo_api_details`, `glomo_docs_search`, `glomo_sample_request`, `glomo_implementation_planner`). Wire identifiers stay as they are (`api.glomopay.com`, `X-Glomopay-Signature`).
 - PR titles carry the Jira key: `KAN-1234 | Short summary`.

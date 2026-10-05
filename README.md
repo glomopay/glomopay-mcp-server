@@ -1,8 +1,8 @@
-# Glomopay MCP Server
+# Glomo MCP Server
 
-An MCP (Model Context Protocol) server that exposes the Glomopay external API to
+An MCP (Model Context Protocol) server that exposes the Glomo external API to
 AI agents. It presents a small, generic tool surface backed by a reviewed
-allowlist, and proxies calls to the Glomopay REST API on behalf of the caller.
+allowlist, and proxies calls to the Glomo REST API on behalf of the caller.
 
 The server is built from the published OpenAPI spec at
 `https://docs.glomo.one/openapi.json` — the same contract the public docs are
@@ -67,9 +67,9 @@ A credential is required only for the execution tools (`glomo_api_read`,
 `glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
 an agent can find and inspect operations before it holds a key.
 
-The execution credential is an expiring, MCP-audience token issued by glomo, not
+The execution credential is an expiring, MCP-audience token issued by Glomo, not
 a merchant API key. When one is present as `Authorization: Bearer <token>`, the
-server verifies its RS256 signature against the configured glomo public key,
+server verifies its RS256 signature against the configured Glomo public key,
 and requires its `aud` claim to equal the configured MCP audience; anything else — an
 unsigned, tampered, or expired token, the wrong algorithm, or a merchant key minted
 for the external API — is rejected before any downstream call. (`iss` is not checked;

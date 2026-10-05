@@ -43,7 +43,7 @@ export class Dispatcher {
   ): Promise<CallToolResult> {
     const operation = this.specIndex.get(operationId);
     if (!operation) {
-      return errorResult(`Unknown operationId "${operationId}": not a documented glomo operation.`, 'unknown_operation');
+      return errorResult(`Unknown operationId "${operationId}": not a documented Glomo operation.`, 'unknown_operation');
     }
     reportToolCall({ operationId, pathTemplate: operation.path });
 
@@ -62,7 +62,7 @@ export class Dispatcher {
     const credential = await this.verifier.resolve(extra);
     reportToolCall({ caller: credential.status === 'valid' ? { sub: credential.credential.sub, env: credential.credential.env } : null });
     if (credential.status === 'absent') {
-      return errorResult('Unauthorized: no glomo credential supplied for this request.', 'auth_missing');
+      return errorResult('Unauthorized: no Glomo credential supplied for this request.', 'auth_missing');
     }
     if (credential.status === 'invalid') {
       return errorResult(`Unauthorized: ${credential.reason}.`, 'auth_invalid');
@@ -73,7 +73,7 @@ export class Dispatcher {
       return errorResult(`Refusing "${operationId}": the execution tools are sandbox-only and require a sandbox credential.`, 'sandbox_only');
     }
 
-    // Route from the raw params; the glomo API validates the body. A derived
+    // Route from the raw params; the Glomo API validates the body. A derived
     // schema would under-model some request bodies and silently drop valid fields.
     const { method } = operation;
     const remaining: Record<string, unknown> = { ...(params ?? {}) };
@@ -137,7 +137,7 @@ export class Dispatcher {
         );
       }
       const message = error instanceof Error ? error.message : String(error);
-      return errorResult(`glomo API call failed for "${operationId}": ${message}`, 'internal');
+      return errorResult(`Glomo API call failed for "${operationId}": ${message}`, 'internal');
     }
   }
 }

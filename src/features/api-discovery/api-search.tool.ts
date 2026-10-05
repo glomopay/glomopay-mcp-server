@@ -15,9 +15,9 @@ export class ApiSearchTool extends BaseTool {
 
     this.config = {
       name: 'glomo_api_search',
-      title: 'glomo API Search',
+      title: 'Glomo API Search',
       description:
-        'Find the right glomo API operation by keyword. Searches the documented operation surface (operationId, summary, tags, path and description) and returns ranked matches with their operationId, method, path and an `executable` flag (plus the tool to run it when executable). Pass an operationId to glomo_api_details for full parameter and schema detail. No credential required.',
+        'Find the right Glomo API operation by keyword. Searches the documented operation surface (operationId, summary, tags, path and description) and returns ranked matches with their operationId, method, path and an `executable` flag (plus the tool to run it when executable). Pass an operationId to glomo_api_details for full parameter and schema detail. No credential required.',
       inputSchema: {
         query: z.string().min(1).max(200).describe('Keywords describing the operation to find, e.g. "create a payout" or "list beneficiaries".'),
         limit: z.number().int().min(1).max(25).optional().describe('Maximum number of results to return (default 10).'),
