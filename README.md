@@ -234,11 +234,12 @@ curl -s -X POST http://127.0.0.1:3000/mcp \
 
 Deployed as a web service on Render from `render.yaml` (a Blueprint),
 auto-deploying `main` once its CI checks pass. `API_HOST` is set in the Render
-dashboard (`sync: false`).
+dashboard (`sync: false`). Only the custom domains listed in `render.yaml` reach
+the service: its `onrender.com` subdomain is disabled and returns 404.
 
 To confirm `TRUST_PROXY_HOPS` after a deploy or platform change, on **every
-hostname that reaches the service** (the custom domain, and the `onrender.com`
-subdomain while it is enabled):
+hostname that reaches the service** (each custom domain, and the `onrender.com`
+subdomain if it is ever re-enabled):
 
 1. Set `CLIENT_IP_DIAGNOSTIC=1`.
 2. On each hostname, send one request carrying a forged first entry, e.g.
