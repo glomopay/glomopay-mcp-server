@@ -21,7 +21,7 @@ services:
       # How many proxies to trust for the client address (see README.md). The app refuses to start on
       # Render without it. Verify it on every hostname with CLIENT_IP_DIAGNOSTIC=1 (README.md, Deployment).
       - key: TRUST_PROXY_HOPS
-        value: '3'
+        value: '2'
     healthCheckPath: /healthz
     # Only the custom domains reach the service; its onrender.com subdomain returns 404.
     # Disabling the subdomain requires at least one custom domain.
