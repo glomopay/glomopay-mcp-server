@@ -5,6 +5,8 @@ services:
     plan: starter
     buildCommand: pnpm install && pnpm build
     startCommand: pnpm start
+    # Deploy a commit on main only after its GitHub checks pass (the CI workflow's build-and-test job runs on every push to main).
+    autoDeployTrigger: checksPass
     envVars:
       # Required: the app defaults to 127.0.0.1; Render only routes to 0.0.0.0.
       - key: HOST
@@ -16,5 +18,10 @@ services:
       # Set the value in the Render dashboard, not in git.
       - key: API_HOST
         sync: false
-    # No health check path: the server exposes only POST /mcp (GET -> 405),
-    # so Render marks the service live on port bind.
+      # Proxy hops in front of the app that append to X-Forwarded-For: the socket peer, Render's internal
+      # proxy and Cloudflare. The client is the next entry to the left. The app refuses to start on Render
+      # without this. Verify after a platform change with CLIENT_IP_DIAGNOSTIC=1 (see README.md).
+      - key: TRUST_PROXY_HOPS
+        value: '3'
+    # The health check path (GET /healthz) is set in a follow-up change, once a deploy serving it is live:
+    # setting it in the same change could health-check the running instance before it serves the route.

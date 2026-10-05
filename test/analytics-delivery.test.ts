@@ -29,9 +29,9 @@ async function until(condition: () => boolean | Promise<boolean>, timeoutMs = 30
 }
 
 /** An app whose Mixpanel host is a real local socket that never answers. */
-async function startWithSilentMixpanel(analyticsTimeoutMs: number): Promise<{ sink: IFakeUpstream; app: ITestServer }> {
+async function startWithSilentMixpanel(analyticsTimeoutMs: number, maxBatchMessages?: number): Promise<{ sink: IFakeUpstream; app: ITestServer }> {
   sink = await startBrokenUpstream('silent');
-  app = await startTestServer({ env: { MIXPANEL_TOKEN, MIXPANEL_HOST: sink.origin }, analyticsTimeoutMs });
+  app = await startTestServer({ env: { MIXPANEL_TOKEN, MIXPANEL_HOST: sink.origin }, analyticsTimeoutMs, maxBatchMessages });
   return { sink, app };
 }
 
@@ -80,7 +80,8 @@ describe('analytics delivery against a Mixpanel host that never answers', () => 
 
   it('caps the queue at 1000 events and counts the overflow as dropped', async () => {
     const before = await droppedTotal();
-    const { sink, app } = await startWithSilentMixpanel(60_000);
+    // Large batches fill the queue fast; the server caps batches far lower by default.
+    const { sink, app } = await startWithSilentMixpanel(60_000, 500);
     const calls = Array.from({ length: 500 }, () => ({ method: 'tools/call', params: { name: 'glomo_api_search', arguments: { query: 'payout' } } }));
     for (let i = 0; i < 3; i++) await rpcBatch(app.url, calls, KEY);
     await pause(100);

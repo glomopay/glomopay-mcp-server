@@ -60,8 +60,44 @@ human adds them.
 
 ## Transport & authentication
 
-The server runs as a **stateless Streamable HTTP** service. The only route is
-`POST /mcp`; `GET`/`DELETE` return `405`.
+The server runs as a **stateless Streamable HTTP** service. The MCP route is
+`POST /mcp`; `GET`/`DELETE` return `405`. `GET /healthz` answers `200 {"status":"ok"}`
+for the host's health check; it touches neither the docs corpus nor the API.
+
+Every request the server turns away gets a JSON-RPC error with no `id`, the
+shape the MCP SDK uses for its own transport errors, and never a stack trace or
+file path:
+
+| Condition                                                   | HTTP  | JSON-RPC code |
+| ----------------------------------------------------------- | ----- | ------------- |
+| Malformed JSON                                              | `400` | `-32700`      |
+| Not a JSON-RPC message, or a batch of more than 20 messages | `400` | `-32600`      |
+| Body over 100 KB (for every accepted Content-Type)          | `413` | `-32000`      |
+| Content-Type without `application/json`                     | `415` | `-32000`      |
+| Rate limited (see below)                                    | `429` | `-32000`      |
+
+### Rate limits
+
+Per client address (IPv6 grouped by /56), counted per minute:
+
+- every request to `/mcp`: `RATE_LIMIT_PER_MINUTE` (300). Addresses in
+  `RATE_LIMIT_SHARED_EGRESS_CIDRS` get `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE`
+  (3000) instead: hosted MCP clients such as claude.ai send every user's calls
+  from a few shared addresses. The default ranges are Anthropic's published
+  egress ranges (https://platform.claude.com/docs/en/api/ip-addresses).
+- execution calls (`glomo_api_read`, `glomo_api_write`), additionally:
+  `RATE_LIMIT_EXECUTION_PER_MINUTE` (60) per credential, so one credential is
+  one budget whatever address it comes from (per address when none is sent).
+
+A limited request gets `429` with `Retry-After` and the `RateLimit` /
+`RateLimit-Policy` headers (IETF draft 8). Counters are in memory, which is exact
+for one instance; with more than one instance each counts separately, so a
+shared store is needed before scaling out. All execution calls leave from this
+service's own egress address, so together they also share whatever per-source
+limit the glomo API applies.
+
+The client address comes from `X-Forwarded-For` only across `TRUST_PROXY_HOPS`
+trusted proxies; with none trusted (the default) the header is ignored.
 
 A credential is required only for the execution tools (`glomo_api_read`,
 `glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
@@ -93,6 +129,17 @@ Environment variables:
 | `GLOMO_MCP_PUBLIC_KEY` | —              | PEM (SPKI) public key the agent credential is verified against. |
 | `GLOMO_MCP_AUDIENCE`   | —              | Expected `aud` claim on the agent credential.                   |
 | `OPENAPI_SPEC_URL`     | docs.glomo.one | Build-time spec source (overridable for CI/testing).            |
+
+HTTP surface:
+
+| Variable                              | Default                   | Description                                                                                                                                                                                     |
+| ------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TRUST_PROXY_HOPS`                    | `0`                       | Proxies in front of the app that append to `X-Forwarded-For` (Express `trust proxy`), 0–5. Required on Render (`3`); the app refuses to start there without it, and on any invalid value.       |
+| `RATE_LIMIT_PER_MINUTE`               | `300`                     | Requests to `/mcp` per client address per minute.                                                                                                                                               |
+| `RATE_LIMIT_EXECUTION_PER_MINUTE`     | `60`                      | Execution calls per credential per minute.                                                                                                                                                      |
+| `RATE_LIMIT_SHARED_EGRESS_CIDRS`      | Anthropic's egress ranges | Comma-separated CIDR ranges that get the shared-egress budget. Empty turns it off.                                                                                                              |
+| `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE` | `3000`                    | Requests to `/mcp` per minute for an address in those ranges.                                                                                                                                   |
+| `CLIENT_IP_DIAGNOSTIC`                | off                       | `1` logs one `client ip diagnostic` line for the first request after boot: where `True-Client-IP` sits in `X-Forwarded-For` and the hop count that implies. It never logs an address or header. |
 
 Without `GLOMO_MCP_PUBLIC_KEY` and `GLOMO_MCP_AUDIENCE`, the execution tools fail
 closed (every credential is rejected); discovery still works.
@@ -132,8 +179,9 @@ All telemetry is off unless configured, so local runs, CI and tests send nothing
 - **Traces, metrics and logs (OpenTelemetry, `service.name` = `glomo-mcp-server`).** One span per
   `tools/call` with a child span for the downstream API call, whose URL is recorded as the operation's path
   template (never the concrete path or query). Incoming HTTP requests are not traced. `mcp.tool.calls`,
-  `mcp.tool.duration` and `mcp.analytics.dropped` metrics; JSON logs on stdout carrying the trace context, also
-  exported over OTLP. Each `glomo_api_write` call writes one audit log line (merchant, operation, HTTP status and
+  `mcp.tool.duration` and `mcp.analytics.dropped` metrics, plus `mcp.http.rejected` (by `reason` and, for
+  `rate_limited`, `limiter`) for requests turned away before the MCP transport, which never send a Mixpanel
+  event. JSON logs on stdout carrying the trace context, also exported over OTLP. Each `glomo_api_write` call writes one audit log line (merchant, operation, HTTP status and
   the downstream request ID; never bodies). The span's `mcpRequestId` equals the Mixpanel `mcp_request_id`.
 
 ## Development
@@ -162,8 +210,14 @@ curl -s -X POST http://127.0.0.1:3000/mcp \
 
 ## Deployment
 
-Deployed as a web service on Render, auto-deploying from `main`. See
-`render.yaml`. `API_HOST` is set in the Render dashboard (`sync: false`).
+Deployed as a web service on Render from `render.yaml` (a Blueprint),
+auto-deploying `main` once its CI checks pass. `API_HOST` is set in the Render
+dashboard (`sync: false`).
+
+To confirm `TRUST_PROXY_HOPS` after a platform change: set
+`CLIENT_IP_DIAGNOSTIC=1`, send one request, and read the `client ip diagnostic`
+log line. `reqIpEqualsTrueClientIp: true` means the setting is right; otherwise
+set `TRUST_PROXY_HOPS` to its `suggestedTrustProxyHops`. Then unset the flag.
 
 ## Security
 
