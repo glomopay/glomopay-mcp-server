@@ -61,20 +61,21 @@ human adds them.
 ## Transport & authentication
 
 The server runs as a **stateless Streamable HTTP** service. The MCP route is
-`POST /mcp`; `GET`/`DELETE` return `405`. `GET /healthz` answers `200 {"status":"ok"}`
-for the host's health check; it touches neither the docs corpus nor the API.
+`POST /mcp`, one JSON-RPC message per request; `GET`/`DELETE` return `405`.
+`GET /healthz` answers `200 {"status":"ok"}` for the host's health check; it
+touches neither the docs corpus nor the API.
 
 Every request the server turns away gets a JSON-RPC error with no `id`, the
 shape the MCP SDK uses for its own transport errors, and never a stack trace or
 file path:
 
-| Condition                                                   | HTTP  | JSON-RPC code |
-| ----------------------------------------------------------- | ----- | ------------- |
-| Malformed JSON                                              | `400` | `-32700`      |
-| Not a JSON-RPC message, or a batch of more than 20 messages | `400` | `-32600`      |
-| Body over 100 KB (for every accepted Content-Type)          | `413` | `-32000`      |
-| Content-Type without `application/json`                     | `415` | `-32000`      |
-| Rate limited (see below)                                    | `429` | `-32000`      |
+| Condition                                                                                    | HTTP  | JSON-RPC code |
+| -------------------------------------------------------------------------------------------- | ----- | ------------- |
+| Malformed JSON                                                                               | `400` | `-32700`      |
+| Not a single JSON-RPC message (JSON-RPC batches are refused, as MCP 2025-06-18 dropped them) | `400` | `-32600`      |
+| Body over 100 KB (for every accepted Content-Type)                                           | `413` | `-32000`      |
+| Content-Type without `application/json`                                                      | `415` | `-32000`      |
+| Rate limited (see below)                                                                     | `429` | `-32000`      |
 
 A credential is required only for the execution tools (`glomo_api_read`,
 `glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
@@ -141,16 +142,16 @@ Environment variables:
 
 HTTP surface:
 
-| Variable                              | Default                   | Description                                                                                                                                                                                     |
-| ------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TRUST_PROXY_HOPS`                    | `0`                       | Proxies in front of the app that append to `X-Forwarded-For` (Express `trust proxy`), 0–5. Required on Render (`3`); the app refuses to start there without it, and on any invalid value.       |
-| `RATE_LIMIT_FLOOD_PER_MINUTE`         | `1200`                    | Flood guard: requests to `/mcp` per client address per minute, verified or not.                                                                                                                 |
-| `RATE_LIMIT_PER_MINUTE`               | `300`                     | Requests per client address per minute from callers without a verified credential.                                                                                                              |
-| `RATE_LIMIT_MERCHANT_PER_MINUTE`      | `600`                     | Requests per verified merchant per minute, from any address.                                                                                                                                    |
-| `RATE_LIMIT_EXECUTION_PER_MINUTE`     | `60`                      | Execution calls per verified merchant (or per address without one) per minute.                                                                                                                  |
-| `RATE_LIMIT_SHARED_EGRESS_CIDRS`      | Anthropic's egress ranges | Comma-separated CIDR ranges that get the shared-egress budget. Empty turns it off.                                                                                                              |
-| `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE` | `3000`                    | Requests to `/mcp` per minute for an address in those ranges.                                                                                                                                   |
-| `CLIENT_IP_DIAGNOSTIC`                | off                       | `1` logs one `client ip diagnostic` line for the first request after boot: where `True-Client-IP` sits in `X-Forwarded-For` and the hop count that implies. It never logs an address or header. |
+| Variable                              | Default                   | Description                                                                                                                                                                                                                                                                                    |
+| ------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TRUST_PROXY_HOPS`                    | `0`                       | How many proxies in front of the app to trust for the client address (Express `trust proxy`), 0–5. `0` trusts none and ignores `X-Forwarded-For`. Required on Render: the app refuses to start there without it, and anywhere on an invalid value. Verify it with `CLIENT_IP_DIAGNOSTIC`.      |
+| `RATE_LIMIT_FLOOD_PER_MINUTE`         | `1200`                    | Flood guard: requests to `/mcp` per client address per minute, verified or not.                                                                                                                                                                                                                |
+| `RATE_LIMIT_PER_MINUTE`               | `300`                     | Requests per client address per minute from callers without a verified credential.                                                                                                                                                                                                             |
+| `RATE_LIMIT_MERCHANT_PER_MINUTE`      | `600`                     | Requests per verified merchant per minute, from any address.                                                                                                                                                                                                                                   |
+| `RATE_LIMIT_EXECUTION_PER_MINUTE`     | `60`                      | Execution calls per verified merchant (or per address without one) per minute.                                                                                                                                                                                                                 |
+| `RATE_LIMIT_SHARED_EGRESS_CIDRS`      | Anthropic's egress ranges | Comma-separated CIDR ranges that get the shared-egress budget. Empty turns it off.                                                                                                                                                                                                             |
+| `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE` | `3000`                    | Requests to `/mcp` per minute for an address in those ranges.                                                                                                                                                                                                                                  |
+| `CLIENT_IP_DIAGNOSTIC`                | off                       | `1` logs a `client ip diagnostic` line (at most 10 per process) for each request whose `X-Forwarded-For` carries an address from `203.0.113.0/24`: positions and booleans that show whether `TRUST_PROXY_HOPS` resolves the real client. It never logs an address, header value or credential. |
 
 Without `GLOMO_MCP_PUBLIC_KEY` and `GLOMO_MCP_AUDIENCE`, the execution tools fail
 closed (every credential is rejected); discovery still works.
@@ -225,10 +226,20 @@ Deployed as a web service on Render from `render.yaml` (a Blueprint),
 auto-deploying `main` once its CI checks pass. `API_HOST` is set in the Render
 dashboard (`sync: false`).
 
-To confirm `TRUST_PROXY_HOPS` after a platform change: set
-`CLIENT_IP_DIAGNOSTIC=1`, send one request, and read the `client ip diagnostic`
-log line. `reqIpEqualsTrueClientIp: true` means the setting is right; otherwise
-set `TRUST_PROXY_HOPS` to its `suggestedTrustProxyHops`. Then unset the flag.
+To confirm `TRUST_PROXY_HOPS` after a deploy or platform change, on **every
+hostname that reaches the service** (the custom domain, and the `onrender.com`
+subdomain while it is enabled):
+
+1. Set `CLIENT_IP_DIAGNOSTIC=1`.
+2. On each hostname, send one request carrying a forged first entry, e.g.
+   `curl -s -X POST https://<host>/mcp -H 'X-Forwarded-For: 203.0.113.7' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`.
+3. Read its `client ip diagnostic` line (`onRenderSubdomain` tells the two apart).
+   The value is right when `suggestedTrustProxyHops` equals `trustProxyHops`,
+   `reqIpIndexFromRight` is one less, and `reqIpIsMarker` and `reqIpIsPrivate`
+   are both `false`. `reqIpIsMarker: true` means too many hops are trusted (the
+   address is spoofable); `reqIpIsPrivate: true` means too few. `True-Client-IP`,
+   when something sets it, is only a cross-check (`reqIpEqualsTrueClientIp`).
+4. Fix `TRUST_PROXY_HOPS` if needed, then unset the flag.
 
 ## Security
 

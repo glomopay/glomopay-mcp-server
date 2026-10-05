@@ -110,9 +110,12 @@ function from(address: string, chain = ''): Record<string, string> {
   return { 'X-Forwarded-For': chain ? `${chain}, ${address}` : address };
 }
 
-/** The chain Render delivers: whatever the client sent, then the client, Cloudflare and an internal proxy. */
-function viaRender(client: string, forged?: string): Record<string, string> {
-  return { 'X-Forwarded-For': [forged, client, '162.158.0.1', '10.0.0.1'].filter(Boolean).join(', '), 'True-Client-IP': client };
+/**
+ * A test X-Forwarded-For for three trusted hops: whatever the client sent, the client, then two proxy
+ * entries; the test socket itself is the remaining hop.
+ */
+function behindProxies(client: string, forged?: string): Record<string, string> {
+  return { 'X-Forwarded-For': [forged, client, '198.51.100.1', '10.0.0.1'].filter(Boolean).join(', ') };
 }
 
 async function statuses(count: number, send: (index: number) => Promise<IRawResponse>): Promise<number[]> {
@@ -123,14 +126,17 @@ async function statuses(count: number, send: (index: number) => Promise<IRawResp
 
 /** A POST with neither Content-Length nor Transfer-Encoding, which fetch cannot send. */
 function postWithoutBody(url: string): Promise<IRawResponse> {
+  return rawRequest(url, 'POST', { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' });
+}
+
+/** A bodyless request written to the socket as given, e.g. with a Host header fetch would not send. */
+function rawRequest(url: string, method: string, headers: Record<string, string>): Promise<IRawResponse> {
   const { hostname, port, pathname } = new URL(url);
+  const lines = Object.entries({ Host: `${hostname}:${port}`, ...headers, Connection: 'close' }).map(([name, value]) => `${name}: ${value}`);
   return new Promise((resolve, reject) => {
     let raw = '';
     const socket = connect(Number(port), hostname, () => {
-      socket.write(
-        `POST ${pathname} HTTP/1.1\r\nHost: ${hostname}:${port}\r\nContent-Type: application/json\r\n` +
-          'Accept: application/json, text/event-stream\r\nConnection: close\r\n\r\n',
-      );
+      socket.write(`${method} ${pathname} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`);
     });
     socket.on('data', (chunk) => (raw += String(chunk)));
     socket.on('error', reject);
@@ -150,7 +156,8 @@ const toolsList = (app: ITestServer, headers?: Record<string, string>) => postRa
 
 const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
 
-const READ_PAYOUT_CALL = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'glomo_api_read', arguments: READ_PAYOUT } });
+const readPayoutMessage = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'glomo_api_read', arguments: READ_PAYOUT } });
+const READ_PAYOUT_CALL = JSON.stringify(readPayoutMessage(1));
 const readPayout = (app: ITestServer, token: string, headers: Record<string, string> = {}) =>
   postRaw(app.url, READ_PAYOUT_CALL, { ...bearer(token), ...headers });
 
@@ -214,8 +221,7 @@ describe('error responses', () => {
 
   for (const [label, body] of [
     ['an object that is not JSON-RPC', '{"a":1}'],
-    ['an empty batch', '[]'],
-    ['a batch holding a non-message', `[${TOOLS_LIST}, 7]`],
+    ['a message with the wrong jsonrpc version', '{"jsonrpc":"1.0","id":1,"method":"tools/list"}'],
   ]) {
     it(`answers ${label} with Invalid Request and no validation detail`, async () => {
       const app = await server();
@@ -228,27 +234,44 @@ describe('error responses', () => {
     });
   }
 
-  it('refuses a batch over 20 messages without running any of them, and serves a batch of 20', async () => {
+  for (const [label, body] of [
+    ['an empty batch', '[]'],
+    ['a batch of one message', `[${TOOLS_LIST}]`],
+    ['a batch holding a non-message', `[${TOOLS_LIST}, 7]`],
+  ]) {
+    it(`refuses ${label}: MCP takes one JSON-RPC message per POST`, async () => {
+      const app = await server();
+      const before = await rejectedCount({ reason: 'batch_unsupported' });
+      const response = await postRaw(app.url, body);
+
+      expect(response.status).toBe(400);
+      expect(jsonRpcError(response)).toEqual({ code: -32600, message: 'Invalid Request: batches are not supported' });
+      expect(await rejectedCount({ reason: 'batch_unsupported' })).toBe(before + 1);
+    });
+  }
+
+  it('refuses a batch of execution calls before the dispatcher: no upstream call, no tool event', async () => {
     const app = await server();
     const mixpanel = captureMixpanel();
-    const call = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'glomo_api_read', arguments: READ_PAYOUT } });
     const reachedBefore = upstream.requests.length;
 
-    const tooMany = await postRaw(app.url, JSON.stringify(Array.from({ length: 21 }, (_, index) => call(index + 1))), {
-      Authorization: `Bearer ${SANDBOX_KEY}`,
-    });
+    const response = await postRaw(app.url, JSON.stringify([readPayoutMessage(1), readPayoutMessage(2), readPayoutMessage(3)]), bearer(SANDBOX_KEY));
     await flushApps();
 
-    expect(tooMany.status).toBe(400);
-    expect(jsonRpcError(tooMany)).toEqual({ code: -32600, message: 'Invalid Request: a batch may carry at most 20 messages' });
+    expect(response.status).toBe(400);
+    expect(jsonRpcError(response)).toEqual({ code: -32600, message: 'Invalid Request: batches are not supported' });
     expect(upstream.requests.length).toBe(reachedBefore);
     expect(mixpanel.events).toHaveLength(0);
+  });
 
-    const twenty = await postRaw(
-      app.url,
-      JSON.stringify(Array.from({ length: 20 }, (_, index) => ({ jsonrpc: '2.0', id: index + 1, method: 'tools/list' }))),
-    );
-    expect(twenty.status).toBe(200);
+  it('runs a single execution call, and every call spends the execution budget', async () => {
+    const app = await server({ rateLimit: { executionPerMinute: 2 } });
+    const reachedBefore = upstream.requests.length;
+
+    // A batch can't carry calls past the budget: it is refused before the limiters count anything.
+    expect((await postRaw(app.url, JSON.stringify([readPayoutMessage(1), readPayoutMessage(2)]), bearer(SANDBOX_KEY))).status).toBe(400);
+    expect(await statuses(3, () => readPayout(app, SANDBOX_KEY))).toEqual([200, 200, 429]);
+    expect(upstream.requests.length).toBe(reachedBefore + 2);
   });
 
   it('answers GET and DELETE on /mcp with a JSON-RPC 405 and an unknown path with a JSON 404', async () => {
@@ -275,6 +298,7 @@ describe('error responses', () => {
     await postRaw(app.url, '{"jsonrpc":');
     await postRaw(app.url, OVERSIZED);
     await postRaw(app.url, '{"a":1}');
+    await postRaw(app.url, `[${TOOLS_LIST}]`);
     await postRaw(app.url, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }), { 'Content-Type': 'text/plain' });
     await flushApps();
 
@@ -465,15 +489,15 @@ describe('client address behind proxies', () => {
   it('ignores entries a client prepends to X-Forwarded-For, with three trusted hops', async () => {
     const app = await server({ trustProxyHops: 3, rateLimit: { perMinute: 2 } });
 
-    expect(await statuses(3, (i) => toolsList(app, viaRender('192.0.2.10', `203.0.113.${i + 1}`)))).toEqual([200, 200, 429]);
+    expect(await statuses(3, (i) => toolsList(app, behindProxies('192.0.2.10', `203.0.113.${i + 1}`)))).toEqual([200, 200, 429]);
   });
 
   it('keys each real client separately, with three trusted hops', async () => {
     const app = await server({ trustProxyHops: 3, rateLimit: { perMinute: 1 } });
 
-    expect((await toolsList(app, viaRender('192.0.2.10'))).status).toBe(200);
-    expect((await toolsList(app, viaRender('192.0.2.11'))).status).toBe(200);
-    expect((await toolsList(app, viaRender('192.0.2.10'))).status).toBe(429);
+    expect((await toolsList(app, behindProxies('192.0.2.10'))).status).toBe(200);
+    expect((await toolsList(app, behindProxies('192.0.2.11'))).status).toBe(200);
+    expect((await toolsList(app, behindProxies('192.0.2.10'))).status).toBe(429);
   });
 
   it('ignores X-Forwarded-For entirely when no proxy is trusted (the default)', async () => {
@@ -509,46 +533,79 @@ describe('client address behind proxies', () => {
 });
 
 describe('client IP diagnostic', () => {
+  const MARKED = (client = '192.0.2.10') => behindProxies(client, '203.0.113.7');
+
   function diagnostics() {
     return logRecords.getFinishedLogRecords().filter((record) => record.body === 'client ip diagnostic');
   }
 
-  it('logs once, with the hop count it measured and no address, header value or credential', async () => {
+  it('measures the hop count from a forged marker entry, with no True-Client-IP, and logs no address or credential', async () => {
     const app = await server({ trustProxyHops: 3, clientIpDiagnostic: true });
-    await toolsList(app, { ...viaRender('192.0.2.10', '203.0.113.7'), Authorization: `Bearer ${SANDBOX_KEY}` });
-    await toolsList(app, viaRender('192.0.2.11'));
+    await toolsList(app, { ...MARKED(), Authorization: `Bearer ${SANDBOX_KEY}` });
+    await toolsList(app, behindProxies('192.0.2.11'));
 
     const records = diagnostics();
     expect(records).toHaveLength(1);
     expect(records[0].attributes).toMatchObject({
       trustProxyHops: 3,
+      onRenderSubdomain: false,
       xffEntries: 4,
-      hasTrueClientIp: true,
-      trueClientIpIndexFromRight: 2,
+      markerIndexFromRight: 3,
       suggestedTrustProxyHops: 3,
-      reqIpEqualsTrueClientIp: true,
+      reqIpFromSocket: false,
+      reqIpIndexFromRight: 2,
+      reqIpIsMarker: false,
       reqIpIsPrivate: false,
+      hasTrueClientIp: false,
     });
     const serialized = JSON.stringify(records[0].attributes);
-    for (const secret of ['192.0.2.10', '203.0.113.7', '162.158.0.1', '10.0.0.1', SANDBOX_KEY.split('.')[2]])
+    for (const secret of ['192.0.2.10', '203.0.113.7', '198.51.100.1', '10.0.0.1', SANDBOX_KEY.split('.')[2]])
       expect(serialized).not.toContain(secret);
   });
 
-  it('shows a wrong hop count: with one trusted hop, req.ip is the private proxy, not the client', async () => {
+  it('shows too few hops: req.ip is a private proxy entry', async () => {
     const app = await server({ trustProxyHops: 1, clientIpDiagnostic: true });
-    await toolsList(app, viaRender('192.0.2.10'));
+    await toolsList(app, MARKED());
 
     expect(diagnostics()[0].attributes).toMatchObject({
       trustProxyHops: 1,
       suggestedTrustProxyHops: 3,
-      reqIpEqualsTrueClientIp: false,
+      reqIpIndexFromRight: 0,
       reqIpIsPrivate: true,
     });
   });
 
+  it('shows too many hops: req.ip is the forged marker, so the address is spoofable', async () => {
+    const app = await server({ trustProxyHops: 5, clientIpDiagnostic: true });
+    await toolsList(app, MARKED());
+
+    expect(diagnostics()[0].attributes).toMatchObject({ trustProxyHops: 5, suggestedTrustProxyHops: 3, reqIpIndexFromRight: 3, reqIpIsMarker: true });
+  });
+
+  it('says whether the request came in on an onrender.com hostname', async () => {
+    const app = await server({ trustProxyHops: 3, clientIpDiagnostic: true });
+    await rawRequest(app.url, 'GET', { ...MARKED(), Host: 'example-service.onrender.com' });
+
+    expect(diagnostics()[0].attributes).toMatchObject({ onRenderSubdomain: true });
+  });
+
+  it('cross-checks True-Client-IP when the request carries one', async () => {
+    const app = await server({ trustProxyHops: 3, clientIpDiagnostic: true });
+    await toolsList(app, { ...MARKED(), 'True-Client-IP': '192.0.2.10' });
+
+    expect(diagnostics()[0].attributes).toMatchObject({ hasTrueClientIp: true, reqIpEqualsTrueClientIp: true });
+  });
+
+  it('logs at most 10 lines however many marked requests arrive', async () => {
+    const app = await server({ trustProxyHops: 3, clientIpDiagnostic: true });
+    await statuses(12, () => toolsList(app, MARKED()));
+
+    expect(diagnostics()).toHaveLength(10);
+  });
+
   it('logs nothing when off', async () => {
     const app = await server({ trustProxyHops: 3, env: { MIXPANEL_TOKEN, CLIENT_IP_DIAGNOSTIC: undefined } });
-    await toolsList(app, viaRender('192.0.2.10'));
+    await toolsList(app, MARKED());
 
     expect(diagnostics()).toHaveLength(0);
   });

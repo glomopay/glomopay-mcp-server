@@ -32,29 +32,28 @@ export function parseJsonBody(reject: TReject): RequestHandler[] {
 }
 
 /**
- * Accepts a single JSON-RPC message or a batch of at most `maxBatchMessages`, and leaves the
- * messages in `res.locals.messages` for the limiters. Anything else gets a 400 with no detail.
+ * Accepts exactly one JSON-RPC message per POST, as MCP 2025-06-18 requires (it dropped JSON-RPC
+ * batching), and leaves it in `res.locals.message` for the limiters, so each budget counts tool calls.
+ * Anything else gets a 400 Invalid Request with no detail.
  */
-export function checkEnvelope(reject: TReject, maxBatchMessages: number): RequestHandler {
+export function checkEnvelope(reject: TReject): RequestHandler {
   return (req, res, next) => {
     const body: unknown = req.body;
-    // An empty body is never parsed; the transport must not be left to read the stream.
+    // A request with no body is never parsed; the transport must not be left to read the stream.
     if (body === undefined) return reject(res, PARSE_ERROR);
-
-    const messages = Array.isArray(body) ? body : [body];
-    if (messages.length > maxBatchMessages) {
+    if (Array.isArray(body)) {
       return reject(res, {
         status: 400,
         code: JSON_RPC_INVALID_REQUEST,
-        message: `Invalid Request: a batch may carry at most ${maxBatchMessages} messages`,
-        reason: 'batch_too_large',
+        message: 'Invalid Request: batches are not supported',
+        reason: 'batch_unsupported',
       });
     }
-    if (messages.length === 0 || !messages.every((message) => JSONRPCMessageSchema.safeParse(message).success)) {
+    if (!JSONRPCMessageSchema.safeParse(body).success) {
       return reject(res, { status: 400, code: JSON_RPC_INVALID_REQUEST, message: 'Invalid Request', reason: 'invalid_request' });
     }
 
-    res.locals.messages = messages;
+    res.locals.message = body;
     next();
   };
 }

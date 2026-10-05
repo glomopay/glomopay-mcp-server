@@ -5,7 +5,7 @@ import nock from 'nock';
 
 import { flushApps } from '@/core/app/app.module';
 import { shutdownTelemetry } from '@/core/telemetry/telemetry.module';
-import { callTool, isRefused, jwt, pause, rpcBatch, startBrokenUpstream, startTestServer, type IFakeUpstream, type ITestServer } from './helpers';
+import { callTool, isRefused, jwt, pause, startBrokenUpstream, startTestServer, type IFakeUpstream, type ITestServer } from './helpers';
 
 const MIXPANEL_TOKEN = 'mixpanel-test-project-token';
 const KEY = jwt('sandbox', { sub: 'merch_4f9a8b7c6d5e' });
@@ -29,9 +29,9 @@ async function until(condition: () => boolean | Promise<boolean>, timeoutMs = 30
 }
 
 /** An app whose Mixpanel host is a real local socket that never answers. */
-async function startWithSilentMixpanel(analyticsTimeoutMs: number, maxBatchMessages?: number): Promise<{ sink: IFakeUpstream; app: ITestServer }> {
+async function startWithSilentMixpanel(analyticsTimeoutMs: number): Promise<{ sink: IFakeUpstream; app: ITestServer }> {
   sink = await startBrokenUpstream('silent');
-  app = await startTestServer({ env: { MIXPANEL_TOKEN, MIXPANEL_HOST: sink.origin }, analyticsTimeoutMs, maxBatchMessages });
+  app = await startTestServer({ env: { MIXPANEL_TOKEN, MIXPANEL_HOST: sink.origin }, analyticsTimeoutMs });
   return { sink, app };
 }
 
@@ -80,10 +80,11 @@ describe('analytics delivery against a Mixpanel host that never answers', () => 
 
   it('caps the queue at 1000 events and counts the overflow as dropped', async () => {
     const before = await droppedTotal();
-    // Large batches fill the queue fast; the server caps batches far lower by default.
-    const { sink, app } = await startWithSilentMixpanel(60_000, 500);
-    const calls = Array.from({ length: 500 }, () => ({ method: 'tools/call', params: { name: 'glomo_api_search', arguments: { query: 'payout' } } }));
-    for (let i = 0; i < 3; i++) await rpcBatch(app.url, calls, KEY);
+    const { sink, app } = await startWithSilentMixpanel(60_000);
+    // One call per POST (the server refuses JSON-RPC batches), 50 at a time.
+    for (let sent = 0; sent < 1500; sent += 50) {
+      await Promise.all(Array.from({ length: 50 }, () => callTool(app.url, 'glomo_api_search', { query: 'payout' }, KEY)));
+    }
     await pause(100);
 
     // 1500 events: at most 4 batches of 50 are in flight, 1000 wait in the queue, the rest are dropped.

@@ -18,9 +18,8 @@ services:
       # Set the value in the Render dashboard, not in git.
       - key: API_HOST
         sync: false
-      # Proxy hops in front of the app that append to X-Forwarded-For: the socket peer, Render's internal
-      # proxy and Cloudflare. The client is the next entry to the left. The app refuses to start on Render
-      # without this. Verify after a platform change with CLIENT_IP_DIAGNOSTIC=1 (see README.md).
+      # How many proxies to trust for the client address (see README.md). The app refuses to start on
+      # Render without it. Verify it on every hostname with CLIENT_IP_DIAGNOSTIC=1 (README.md, Deployment).
       - key: TRUST_PROXY_HOPS
         value: '3'
     # The health check path (GET /healthz) is set in a follow-up change, once a deploy serving it is live:

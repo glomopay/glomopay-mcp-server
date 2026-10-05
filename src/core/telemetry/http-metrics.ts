@@ -7,7 +7,7 @@ export type TRejectionReason =
   | 'rate_limited'
   | 'parse_error'
   | 'invalid_request'
-  | 'batch_too_large'
+  | 'batch_unsupported'
   | 'body_too_large'
   | 'unsupported_media_type'
   | 'bad_request'

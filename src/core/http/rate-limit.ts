@@ -28,9 +28,9 @@ export interface IRateLimitConfig {
   sharedEgressPerMinute: number;
 }
 
-/** The JSON-RPC messages of a request that passed the envelope check (see `request-envelope.ts`). */
-export function messagesOf(res: Response): JSONRPCMessage[] {
-  return (res.locals.messages as JSONRPCMessage[] | undefined) ?? [];
+/** The one JSON-RPC message of a request that passed the envelope check (see `request-envelope.ts`). */
+function messageOf(res: Response): JSONRPCMessage | undefined {
+  return res.locals.message as JSONRPCMessage | undefined;
 }
 
 /** The merchant behind a credential that passed `CredentialVerifier`; undefined for none, or one that failed. */
@@ -38,8 +38,8 @@ function verifiedMerchant(res: Response): string | undefined {
   return res.locals.verifiedMerchant as string | undefined;
 }
 
-function isExecutionCall(message: JSONRPCMessage): boolean {
-  if (!('method' in message) || message.method !== 'tools/call') return false;
+function isExecutionCall(message: JSONRPCMessage | undefined): boolean {
+  if (!message || !('method' in message) || message.method !== 'tools/call') return false;
   const name = (message.params as { name?: unknown } | undefined)?.name;
   return typeof name === 'string' && EXECUTION_TOOLS.has(name);
 }
@@ -133,7 +133,7 @@ export function executionRateLimit(config: IRateLimitConfig, reject: TReject): R
     ...SHARED_OPTIONS,
     identifier: 'execution',
     limit: config.executionPerMinute,
-    skip: (_req, res) => !messagesOf(res).some(isExecutionCall),
+    skip: (_req, res) => !isExecutionCall(messageOf(res)),
     keyGenerator: callerKey,
     handler: rejectWith(reject, 'execution'),
   });

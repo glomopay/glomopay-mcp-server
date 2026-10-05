@@ -36,14 +36,11 @@ export interface ICreateAppOptions {
   trustProxyHops?: number;
   /** Overrides the RATE_LIMIT_* env values it sets; the rest come from env or the defaults. */
   rateLimit?: Partial<IRateLimitConfig>;
-  /** Most JSON-RPC messages one POST may carry. */
-  maxBatchMessages?: number;
   /** Overrides CLIENT_IP_DIAGNOSTIC. */
   clientIpDiagnostic?: boolean;
 }
 
 const DEFAULT_DOWNSTREAM_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_BATCH_MESSAGES = 20;
 
 const shutdownHooks: (() => Promise<void>)[] = [];
 
@@ -95,14 +92,12 @@ export async function createApp({
   downstreamTimeoutMs = DEFAULT_DOWNSTREAM_TIMEOUT_MS,
   trustProxyHops,
   rateLimit,
-  maxBatchMessages = DEFAULT_MAX_BATCH_MESSAGES,
   clientIpDiagnostic,
 }: ICreateAppOptions): Promise<Express> {
   // Read first, so a bad HTTP setting fails app creation before anything else is built.
   const httpOptions = {
     trustProxyHops: trustProxyHops ?? config.http.trustProxyHops,
     rateLimit: { ...config.http.rateLimit, ...definedOnly(rateLimit ?? {}) },
-    maxBatchMessages,
     clientIpDiagnostic: clientIpDiagnostic ?? config.http.clientIpDiagnostic,
   };
   const apiClient = new ApiClient({ baseURL: apiHost, timeout: downstreamTimeoutMs });

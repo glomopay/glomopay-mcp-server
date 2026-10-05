@@ -88,6 +88,7 @@ Do not weaken these without an explicit security review.
 - One MCP server instance per request.
 - `trust proxy` is an explicit hop count from `TRUST_PROXY_HOPS`, never `true`: a client controls the left of
   `X-Forwarded-For`. The app refuses to start on Render without it.
+- One JSON-RPC message per POST: batches are refused before the transport, so every rate limit counts tool calls.
 - Requests rejected before the MCP transport (bad body, rate limit) never reach analytics; they are counted in
   `mcp.http.rejected` only, with no client address, credential or path as an attribute.
 - Rate limits key a caller on the merchant (`sub`) only after `CredentialVerifier` accepts its credential;

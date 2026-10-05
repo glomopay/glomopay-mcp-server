@@ -20,8 +20,6 @@ export interface IHttpServerOptions {
   /** Proxy hops in front of the app (Express `trust proxy`); 0 trusts none, so X-Forwarded-For is ignored. */
   trustProxyHops: number;
   rateLimit: IRateLimitConfig;
-  /** Most JSON-RPC messages one POST may carry. */
-  maxBatchMessages: number;
   /** Log the one-shot client IP diagnostic (see `client-ip-diagnostic.ts`). */
   clientIpDiagnostic: boolean;
 }
@@ -45,7 +43,7 @@ export function createHttpServer(mcpServer: MCPServer, options: IHttpServerOptio
   app.post(
     '/mcp',
     ...parseJsonBody(reject),
-    checkEnvelope(reject, options.maxBatchMessages),
+    checkEnvelope(reject),
     apiKeyAuthMiddleware,
     identifyCaller(options.verifier),
     callerRateLimit(options.rateLimit, reject),

@@ -45,7 +45,6 @@ export interface ITestServerOptions {
   trustProxyHops?: number;
   /** Defaults to limits no suite reaches; pass `{}` to take them from env (or the production defaults). */
   rateLimit?: ICreateAppOptions['rateLimit'];
-  maxBatchMessages?: number;
   clientIpDiagnostic?: boolean;
   /** Environment the app is created under; restored afterwards. */
   env?: Record<string, string | undefined>;
@@ -84,7 +83,6 @@ export async function startTestServer(options: ITestServerOptions = {}): Promise
       analyticsTimeoutMs: options.analyticsTimeoutMs,
       trustProxyHops: options.trustProxyHops,
       rateLimit: options.rateLimit ?? UNREACHED_RATE_LIMIT,
-      maxBatchMessages: options.maxBatchMessages,
       clientIpDiagnostic: options.clientIpDiagnostic,
     }),
   );
@@ -373,16 +371,6 @@ export async function postRaw(url: string, body: string, headers: Record<string,
     body,
   });
   return { status: response.status, headers: response.headers, text: await response.text() };
-}
-
-/** Sends several JSON-RPC requests in one POST and waits for the whole reply. */
-export async function rpcBatch(url: string, messages: { method: string; params: unknown }[], bearer: string): Promise<string> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${bearer}` },
-    body: JSON.stringify(messages.map((message, index) => ({ jsonrpc: '2.0', id: index + 1, ...message }))),
-  });
-  return response.text();
 }
 
 export function pause(ms: number): Promise<void> {
