@@ -11,9 +11,9 @@ declare module 'express-serve-static-core' {
 const BEARER_PREFIX = 'Bearer ';
 
 /**
- * Parses `Authorization: Bearer <glomopay-secret>` when present and exposes it to tools as
- * `extra.authInfo.token`. The bearer IS the downstream Glomo secret (API-key pass-through)
- * — the server proxies calls under the caller's own key. It never rejects a request: the
+ * Parses `Authorization: Bearer <mcp-credential>` when present and exposes it to tools as
+ * `extra.authInfo.token`. The bearer is the caller's MCP credential, which `CredentialVerifier`
+ * checks before any execution call; a secret key is never accepted. It never rejects a request: the
  * discovery tools and `tools/list` are usable without a credential, and the read/write tools
  * fail closed in the dispatcher when no credential is present.
  */

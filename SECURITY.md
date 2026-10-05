@@ -23,11 +23,11 @@ reported through the same channel.
 
 ## Handling of credentials
 
-This server uses API-key pass-through: each caller supplies their own Glomo
-secret as a per-request bearer token. The server stores no long-lived
-credentials.
+Callers authenticate with their own MCP credential: an expiring, MCP-audience
+token minted with their test secret key. The server verifies it and never
+accepts a secret key. The server stores no long-lived credentials.
 
 - Never commit secrets, API keys, or JWTs to this repository — including in
   documentation or example configuration.
-- If a secret is committed, treat it as compromised: rotate it and purge it from
-  history.
+- If a secret is committed, treat it as compromised and rotate it immediately.
+  Removing it from the repository does not make it safe to keep using.
