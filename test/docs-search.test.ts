@@ -59,7 +59,7 @@ describe('glomo_docs_search', () => {
     const payload = JSON.parse(resultText(await search('which payout rail for UPI'))) as { results: Record<string, unknown>[] };
     const url = 'https://docs.glomo.one/.well-known/skills/glomo-payouts/SKILL.md';
     expect(payload.results[0]).toEqual({
-      title: 'glomo-payouts',
+      title: 'Glomo payouts (agent skill)',
       url,
       heading: 'Choosing the rail',
       anchor: `${url}#choosing-the-rail`,

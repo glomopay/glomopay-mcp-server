@@ -114,9 +114,8 @@ const JSON_CONTENT = /application\/json/;
 async function fetchDocs(url: string, accept: RegExp = TEXT_CONTENT): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-      // fetch follows redirects, so pin the host on the URL the body came from too.
-      if (response.redirected && !isDocsUrl(response.url)) throw new Error(`redirected to a non-docs URL: ${response.url}`);
+      // Refuse redirects outright, so a request never leaves the pinned docs URL.
+      const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       const contentType = response.headers.get('content-type') ?? '';
       if (response.ok && accept.test(contentType)) return response.text();
       if (attempt === 1) throw new Error(`${response.status} ${response.statusText} (${contentType || 'no content-type'})`);
@@ -180,7 +179,13 @@ function parseSkillFile(text: string, skill: ISkillListing): ICorpusPage {
     .trim();
   if (!content) throw new Error(`[corpus] ${skill.url} has no content after its frontmatter`);
 
-  return { title: skill.name, url: skill.url, section: SKILLS_SECTION, sectionDescription: '', entryDescription: '', content };
+  return { title: skillTitle(skill.name), url: skill.url, section: SKILLS_SECTION, sectionDescription: '', entryDescription: '', content };
+}
+
+// glomo-payouts -> "Glomo payouts (agent skill)". The URL already identifies the skill exactly.
+function skillTitle(name: string): string {
+  const topic = name.replace(/^glomo-/, '').replace(/-/g, ' ');
+  return `Glomo ${topic} (agent skill)`;
 }
 
 async function buildSkillPages(indexUrl: string): Promise<ICorpusPage[]> {

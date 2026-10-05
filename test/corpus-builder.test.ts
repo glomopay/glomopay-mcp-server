@@ -163,11 +163,12 @@ describe('buildCorpus', () => {
     await expect(buildCorpus(undefined, undefined, 'https://evil.example.com/.well-known/skills/index.json')).rejects.toThrow(/refusing non-docs/);
   });
 
-  it('fails closed when a docs fetch redirects off the docs host', async () => {
+  it('fails closed on a redirect without requesting the other host', async () => {
     nock(DOCS_ORIGIN).get('/llms.txt').reply(200, LLMS_INDEX, TEXT);
     nock(DOCS_ORIGIN).get('/llms-full.txt').times(2).reply(302, '', { location: 'https://evil.example.com/llms-full.txt' });
-    nock('https://evil.example.com').get('/llms-full.txt').times(2).reply(200, LLMS_FULL, TEXT);
-    await expect(buildCorpus()).rejects.toThrow(/redirected to a non-docs URL/);
+    const offHost = nock('https://evil.example.com').get('/llms-full.txt').times(2).reply(200, LLMS_FULL, TEXT);
+    await expect(buildCorpus()).rejects.toThrow(/failed to fetch https:\/\/docs\.glomo\.one\/llms-full\.txt/);
+    expect(offHost.isDone()).toBe(false);
   });
 });
 
@@ -176,9 +177,9 @@ describe('buildCorpus skills', () => {
     nockDocs();
     nockSkills();
     const skills = (await buildCorpus()).filter((page) => page.section === 'Skills');
-    expect(skills.map((page) => page.title)).toEqual(recordedNames);
+    expect(skills.map((page) => page.url)).toEqual(recordedNames.map((name) => `${DOCS_ORIGIN}${skillPath(name)}`));
+    expect(skills.find((page) => page.url.endsWith('/glomo-payouts/SKILL.md'))?.title).toBe('Glomo payouts (agent skill)');
     for (const page of skills) {
-      expect(page.url).toBe(`${DOCS_ORIGIN}${skillPath(page.title)}`);
       expect(page.content).not.toMatch(/^---/);
       expect(page.content).not.toMatch(/^(name|description|metadata):/m);
     }
