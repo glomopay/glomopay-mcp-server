@@ -7,7 +7,7 @@ import { createServer, type AddressInfo, type Socket } from 'node:net';
 
 import nock from 'nock';
 
-import { createApp } from '@/core/app/app.module';
+import { createApp, type ICreateAppOptions } from '@/core/app/app.module';
 
 export const API_BASE = process.env.GLOMO_API_HOST ?? 'https://sandbox-api.glomopay.com';
 export const isRecording = process.env.NOCK_BACK_MODE === 'record';
@@ -42,9 +42,21 @@ export interface ITestServerOptions {
   apiHost?: string;
   downstreamTimeoutMs?: number;
   analyticsTimeoutMs?: number;
+  trustProxyHops?: number;
+  /** Defaults to limits no suite reaches; pass `{}` to take them from env (or the production defaults). */
+  rateLimit?: ICreateAppOptions['rateLimit'];
+  clientIpDiagnostic?: boolean;
   /** Environment the app is created under; restored afterwards. */
   env?: Record<string, string | undefined>;
 }
+
+const UNREACHED_RATE_LIMIT = {
+  floodPerMinute: 1_000_000,
+  perMinute: 1_000_000,
+  merchantPerMinute: 1_000_000,
+  executionPerMinute: 1_000_000,
+  sharedEgressPerMinute: 1_000_000,
+};
 
 function withEnv<T>(env: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
   const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
@@ -69,6 +81,9 @@ export async function startTestServer(options: ITestServerOptions = {}): Promise
       analyticsFlushIntervalMs: 5,
       downstreamTimeoutMs: options.downstreamTimeoutMs,
       analyticsTimeoutMs: options.analyticsTimeoutMs,
+      trustProxyHops: options.trustProxyHops,
+      rateLimit: options.rateLimit ?? UNREACHED_RATE_LIMIT,
+      clientIpDiagnostic: options.clientIpDiagnostic,
     }),
   );
   const server: Server = await new Promise((resolve) => {
@@ -342,14 +357,20 @@ export async function startBrokenUpstream(
   };
 }
 
-/** Sends several JSON-RPC requests in one POST and waits for the whole reply. */
-export async function rpcBatch(url: string, messages: { method: string; params: unknown }[], bearer: string): Promise<string> {
+export interface IRawResponse {
+  status: number;
+  headers: Headers;
+  text: string;
+}
+
+/** POSTs a body exactly as given, with MCP's Accept and a JSON Content-Type unless overridden. */
+export async function postRaw(url: string, body: string, headers: Record<string, string> = {}): Promise<IRawResponse> {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${bearer}` },
-    body: JSON.stringify(messages.map((message, index) => ({ jsonrpc: '2.0', id: index + 1, ...message }))),
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
+    body,
   });
-  return response.text();
+  return { status: response.status, headers: response.headers, text: await response.text() };
 }
 
 export function pause(ms: number): Promise<void> {

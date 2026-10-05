@@ -25,7 +25,7 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 - `glomo_implementation_planner` returns authored flows only, parsed from the docs Get started page
   (`src/core/planner/flow-guide.ts`). Never derive a call order from the spec. The step format is closed: a
   step that matches neither form, or names an operation the spec doesn't have, fails `pnpm build`.
-- `CredentialVerifier` (`src/features/auth/credential-resolver.ts`) is the only place credentials are read.
+- `CredentialVerifier` (`src/features/auth/credential-resolver.ts`) is the only place credentials are verified.
   It verifies the agent credential (RS256 signature against the configured public key, `aud` = MCP audience,
   `exp`/`iat` required) and returns its `env`/`sub`; the dispatcher enforces the sandbox rule. The public
   key and audience come from env
@@ -69,6 +69,8 @@ caller's own credential. Tool surface, env vars and deployment are in README.md.
 - Upstream statuses, timeouts and dropped connections come from a real local server (`startBrokenUpstream` in
   `test/helpers.ts`), not from hand-written nock replies.
 - Every guard has a test that goes red when the guard is removed.
+- HTTP-surface behaviour (error shape, limits, client address, `/healthz`) is tested with raw POSTs in
+  `test/http-hardening.test.ts`. `startTestServer` sets limits no suite reaches; pass `rateLimit` to test them.
 - Use real ID prefixes (`payout_`, `cust_`, ...) and obviously fake test tokens.
 - Scrub cassettes of auth, tokens, names, emails, phones, addresses and account numbers before committing.
 - Test behaviour, not implementation. Don't test private methods directly.
@@ -84,6 +86,14 @@ Do not weaken these without an explicit security review.
 - Execution tools are sandbox-only and fail closed: the credential's `env` claim must be exactly `sandbox`.
 - Path params are validated against the path template, never interpolated raw.
 - One MCP server instance per request.
+- `trust proxy` is an explicit hop count from `TRUST_PROXY_HOPS`, never `true`: a client controls the left of
+  `X-Forwarded-For`. The app refuses to start on Render without it.
+- One JSON-RPC message per POST: batches are refused before the transport, so every rate limit counts tool calls.
+- Requests rejected before the MCP transport (bad body, rate limit) never reach analytics; they are counted in
+  `mcp.http.rejected` only, with no client address, credential or path as an attribute.
+- Rate limits key a caller on the merchant (`sub`) only after `CredentialVerifier` accepts its credential;
+  anything unverified is keyed by client address. Never key on a raw or decoded-but-unverified bearer, so a
+  made-up token can't mint a bucket. The key stays in memory and never reaches a log or metric.
 
 ## Public-repo hygiene
 

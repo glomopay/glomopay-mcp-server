@@ -1,1 +1,1 @@
-export { config } from './app.config';
+export { config, ConfigError, ANTHROPIC_EGRESS_CIDRS, RATE_LIMIT_DEFAULTS } from './app.config';

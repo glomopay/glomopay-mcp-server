@@ -60,8 +60,22 @@ human adds them.
 
 ## Transport & authentication
 
-The server runs as a **stateless Streamable HTTP** service. The only route is
-`POST /mcp`; `GET`/`DELETE` return `405`.
+The server runs as a **stateless Streamable HTTP** service. The MCP route is
+`POST /mcp`, one JSON-RPC message per request; `GET`/`DELETE` return `405`.
+`GET /healthz` answers `200 {"status":"ok"}` for the host's health check; it
+touches neither the docs corpus nor the API.
+
+Every request the server turns away gets a JSON-RPC error with no `id`, the
+shape the MCP SDK uses for its own transport errors, and never a stack trace or
+file path:
+
+| Condition                                                                                    | HTTP  | JSON-RPC code |
+| -------------------------------------------------------------------------------------------- | ----- | ------------- |
+| Malformed JSON                                                                               | `400` | `-32700`      |
+| Not a single JSON-RPC message (JSON-RPC batches are refused, as MCP 2025-06-18 dropped them) | `400` | `-32600`      |
+| Body over 100 KB (for every accepted Content-Type)                                           | `413` | `-32000`      |
+| Content-Type without `application/json`                                                      | `415` | `-32000`      |
+| Rate limited (see below)                                                                     | `429` | `-32000`      |
 
 A credential is required only for the execution tools (`glomo_api_read`,
 `glomo_api_write`). `tools/list` and every discovery tool run unauthenticated, so
@@ -81,6 +95,38 @@ discovery and `tools/list`; the execution tools fail closed. The server holds no
 Verification is isolated behind a single seam
 (`src/features/auth/credential-resolver.ts`).
 
+### Rate limits
+
+Three limits, each counted per minute (client addresses group IPv6 by /56):
+
+- **Flood guard**, every request to `/mcp` per client address, verified or not,
+  before the body is read: `RATE_LIMIT_FLOOD_PER_MINUTE` (1200).
+- **Per caller**, every request:
+  - a caller whose credential passes verification is budgeted per merchant (the
+    credential's `sub`), wherever it calls from: `RATE_LIMIT_MERCHANT_PER_MINUTE`
+    (600). Its address budget does not apply.
+  - anyone else (no credential, or one that fails verification) is budgeted per
+    client address: `RATE_LIMIT_PER_MINUTE` (300). A made-up token never earns a
+    budget of its own.
+  - Addresses in `RATE_LIMIT_SHARED_EGRESS_CIDRS` get
+    `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE` (3000) instead of the per-address and
+    flood limits: hosted MCP clients such as claude.ai send every user's calls
+    from a few shared addresses. The default ranges are Anthropic's published
+    egress ranges (https://platform.claude.com/docs/en/api/ip-addresses).
+- **Execution** calls (`glomo_api_read`, `glomo_api_write`), additionally:
+  `RATE_LIMIT_EXECUTION_PER_MINUTE` (60), keyed the same way (per merchant, or
+  per address without a verified credential).
+
+A limited request gets `429` with `Retry-After` and the `RateLimit` /
+`RateLimit-Policy` headers (IETF draft 8). Counters are in memory, which is exact
+for one instance; with more than one instance each counts separately, so a
+shared store is needed before scaling out. All execution calls leave from this
+service's own egress address, so together they also share whatever per-source
+limit the Glomo API applies.
+
+The client address comes from `X-Forwarded-For` only across `TRUST_PROXY_HOPS`
+trusted proxies; with none trusted (the default) the header is ignored.
+
 ## Configuration
 
 Environment variables:
@@ -93,6 +139,19 @@ Environment variables:
 | `GLOMO_MCP_PUBLIC_KEY` | —              | PEM (SPKI) public key the agent credential is verified against. |
 | `GLOMO_MCP_AUDIENCE`   | —              | Expected `aud` claim on the agent credential.                   |
 | `OPENAPI_SPEC_URL`     | docs.glomo.one | Build-time spec source (overridable for CI/testing).            |
+
+HTTP surface:
+
+| Variable                              | Default                   | Description                                                                                                                                                                                                                                                                                    |
+| ------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TRUST_PROXY_HOPS`                    | `0`                       | How many proxies in front of the app to trust for the client address (Express `trust proxy`), 0–5. `0` trusts none and ignores `X-Forwarded-For`. Required on Render: the app refuses to start there without it, and anywhere on an invalid value. Verify it with `CLIENT_IP_DIAGNOSTIC`.      |
+| `RATE_LIMIT_FLOOD_PER_MINUTE`         | `1200`                    | Flood guard: requests to `/mcp` per client address per minute, verified or not.                                                                                                                                                                                                                |
+| `RATE_LIMIT_PER_MINUTE`               | `300`                     | Requests per client address per minute from callers without a verified credential.                                                                                                                                                                                                             |
+| `RATE_LIMIT_MERCHANT_PER_MINUTE`      | `600`                     | Requests per verified merchant per minute, from any address.                                                                                                                                                                                                                                   |
+| `RATE_LIMIT_EXECUTION_PER_MINUTE`     | `60`                      | Execution calls per verified merchant (or per address without one) per minute.                                                                                                                                                                                                                 |
+| `RATE_LIMIT_SHARED_EGRESS_CIDRS`      | Anthropic's egress ranges | Comma-separated CIDR ranges that get the shared-egress budget. Empty turns it off.                                                                                                                                                                                                             |
+| `RATE_LIMIT_SHARED_EGRESS_PER_MINUTE` | `3000`                    | Requests to `/mcp` per minute for an address in those ranges.                                                                                                                                                                                                                                  |
+| `CLIENT_IP_DIAGNOSTIC`                | off                       | `1` logs a `client ip diagnostic` line (at most 10 per process) for each request whose `X-Forwarded-For` carries an address from `203.0.113.0/24`: positions and booleans that show whether `TRUST_PROXY_HOPS` resolves the real client. It never logs an address, header value or credential. |
 
 Without `GLOMO_MCP_PUBLIC_KEY` and `GLOMO_MCP_AUDIENCE`, the execution tools fail
 closed (every credential is rejected); discovery still works.
@@ -132,8 +191,9 @@ All telemetry is off unless configured, so local runs, CI and tests send nothing
 - **Traces, metrics and logs (OpenTelemetry, `service.name` = `glomo-mcp-server`).** One span per
   `tools/call` with a child span for the downstream API call, whose URL is recorded as the operation's path
   template (never the concrete path or query). Incoming HTTP requests are not traced. `mcp.tool.calls`,
-  `mcp.tool.duration` and `mcp.analytics.dropped` metrics; JSON logs on stdout carrying the trace context, also
-  exported over OTLP. Each `glomo_api_write` call writes one audit log line (merchant, operation, HTTP status and
+  `mcp.tool.duration` and `mcp.analytics.dropped` metrics, plus `mcp.http.rejected` (by `reason` and, for
+  `rate_limited`, `limiter`) for requests turned away before the MCP transport, which never send a Mixpanel
+  event. JSON logs on stdout carrying the trace context, also exported over OTLP. Each `glomo_api_write` call writes one audit log line (merchant, operation, HTTP status and
   the downstream request ID; never bodies). The span's `mcpRequestId` equals the Mixpanel `mcp_request_id`.
 
 ## Development
@@ -162,8 +222,24 @@ curl -s -X POST http://127.0.0.1:3000/mcp \
 
 ## Deployment
 
-Deployed as a web service on Render, auto-deploying from `main`. See
-`render.yaml`. `API_HOST` is set in the Render dashboard (`sync: false`).
+Deployed as a web service on Render from `render.yaml` (a Blueprint),
+auto-deploying `main` once its CI checks pass. `API_HOST` is set in the Render
+dashboard (`sync: false`).
+
+To confirm `TRUST_PROXY_HOPS` after a deploy or platform change, on **every
+hostname that reaches the service** (the custom domain, and the `onrender.com`
+subdomain while it is enabled):
+
+1. Set `CLIENT_IP_DIAGNOSTIC=1`.
+2. On each hostname, send one request carrying a forged first entry, e.g.
+   `curl -s -X POST https://<host>/mcp -H 'X-Forwarded-For: 203.0.113.7' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`.
+3. Read its `client ip diagnostic` line (`onRenderSubdomain` tells the two apart).
+   The value is right when `suggestedTrustProxyHops` equals `trustProxyHops`,
+   `reqIpIndexFromRight` is one less, and `reqIpIsMarker` and `reqIpIsPrivate`
+   are both `false`. `reqIpIsMarker: true` means too many hops are trusted (the
+   address is spoofable); `reqIpIsPrivate: true` means too few. `True-Client-IP`,
+   when something sets it, is only a cross-check (`reqIpEqualsTrueClientIp`).
+4. Fix `TRUST_PROXY_HOPS` if needed, then unset the flag.
 
 ## Security
 

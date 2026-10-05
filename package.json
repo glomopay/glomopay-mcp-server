@@ -39,6 +39,7 @@
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "axios": "^1.13.1",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.0",
     "jose": "^6.2.12",
     "zod": "^3.25.76"
   },

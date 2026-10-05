@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 
 import { MCPServer } from '@/core/mcp-server/mcp-server.module';
-import { createHttpServer } from '@/core/http/http-server.module';
+import { createHttpServer, type IRateLimitConfig } from '@/core/http/http-server.module';
 import { Dispatcher, loadSpecDocument, buildSpecIndex } from '@/core/dispatcher/dispatcher.module';
 import { buildCatalog } from '@/core/catalog/catalog.module';
 import { executionAllowlist } from '@/features/allowlist/allowlist.module';
@@ -17,7 +17,7 @@ import { ApiClient } from '@/shared/api-client/api-client.module';
 import { logger } from '@/shared/logger/logger.module';
 import { packageVersion } from '@/shared/package-info/package-info.module';
 import { createAnalytics, type IAnalytics } from '@/core/analytics/analytics.module';
-import { ToolCallObserver, createToolMetrics } from '@/core/telemetry/telemetry.module';
+import { ToolCallObserver, createHttpMetrics, createToolMetrics } from '@/core/telemetry/telemetry.module';
 import { config } from '@/features/app-config/app-config.module';
 
 export interface ICreateAppOptions {
@@ -32,6 +32,12 @@ export interface ICreateAppOptions {
   analyticsTimeoutMs?: number;
   /** Upper bound on a downstream Glomo API call. */
   downstreamTimeoutMs?: number;
+  /** Overrides TRUST_PROXY_HOPS. */
+  trustProxyHops?: number;
+  /** Overrides the RATE_LIMIT_* env values it sets; the rest come from env or the defaults. */
+  rateLimit?: Partial<IRateLimitConfig>;
+  /** Overrides CLIENT_IP_DIAGNOSTIC. */
+  clientIpDiagnostic?: boolean;
 }
 
 const DEFAULT_DOWNSTREAM_TIMEOUT_MS = 30_000;
@@ -60,6 +66,10 @@ function createObserver(
   return { observer: new ToolCallObserver({ analytics, metrics, verifier }), analytics };
 }
 
+function definedOnly<T extends object>(values: T): Partial<T> {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as Partial<T>;
+}
+
 function loadFlowGuide(corpus: { url: string; content: string }[] | undefined): IFlowGuide | undefined {
   if (!corpus) return undefined;
   try {
@@ -80,7 +90,16 @@ export async function createApp({
   analyticsFlushIntervalMs,
   analyticsTimeoutMs,
   downstreamTimeoutMs = DEFAULT_DOWNSTREAM_TIMEOUT_MS,
+  trustProxyHops,
+  rateLimit,
+  clientIpDiagnostic,
 }: ICreateAppOptions): Promise<Express> {
+  // Read first, so a bad HTTP setting fails app creation before anything else is built.
+  const httpOptions = {
+    trustProxyHops: trustProxyHops ?? config.http.trustProxyHops,
+    rateLimit: { ...config.http.rateLimit, ...definedOnly(rateLimit ?? {}) },
+    clientIpDiagnostic: clientIpDiagnostic ?? config.http.clientIpDiagnostic,
+  };
   const apiClient = new ApiClient({ baseURL: apiHost, timeout: downstreamTimeoutMs });
   const verifier = new CredentialVerifier({ publicKeyPem: authPublicKey, audience: authAudience });
   const parsedSpec = await loadSpecDocument(specPath);
@@ -113,5 +132,5 @@ export async function createApp({
   mcpServer.registerTool(new ApiReadTool(dispatcher, readOperationIds));
   mcpServer.registerTool(new ApiWriteTool(dispatcher, writeOperationIds));
 
-  return createHttpServer(mcpServer);
+  return createHttpServer(mcpServer, { ...httpOptions, verifier, metrics: createHttpMetrics() });
 }
