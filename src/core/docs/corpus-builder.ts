@@ -13,6 +13,11 @@ export interface ICorpusPage extends ICorpusEntry {
 export const DOCS_ORIGIN = 'https://docs.glomo.one';
 export const LLMS_FULL_URL = `${DOCS_ORIGIN}/llms-full.txt`;
 export const LLMS_INDEX_URL = `${DOCS_ORIGIN}/llms.txt`;
+export const SKILLS_INDEX_URL = `${DOCS_ORIGIN}/.well-known/skills/index.json`;
+export const SKILLS_SECTION = 'Skills';
+
+const SKILL_FILE = 'SKILL.md';
+const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -103,12 +108,16 @@ function assertCorpusMatchesIndex(pages: ICorpusPage[], indexUrls: string[]): vo
   }
 }
 
-async function fetchDocs(url: string): Promise<string> {
+const TEXT_CONTENT = /markdown|text\/plain/;
+const JSON_CONTENT = /application\/json/;
+
+async function fetchDocs(url: string, accept: RegExp = TEXT_CONTENT): Promise<string> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      // Refuse redirects outright, so a request never leaves the pinned docs URL.
+      const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       const contentType = response.headers.get('content-type') ?? '';
-      if (response.ok && /markdown|text\/plain/.test(contentType)) return response.text();
+      if (response.ok && accept.test(contentType)) return response.text();
       if (attempt === 1) throw new Error(`${response.status} ${response.statusText} (${contentType || 'no content-type'})`);
     } catch (error) {
       if (attempt === 1) throw new Error(`[corpus] failed to fetch ${url}: ${error instanceof Error ? error.message : String(error)}`);
@@ -117,14 +126,88 @@ async function fetchDocs(url: string): Promise<string> {
   throw new Error(`[corpus] failed to fetch ${url}`);
 }
 
-export async function buildCorpus(fullUrl: string = LLMS_FULL_URL, indexUrl: string = LLMS_INDEX_URL): Promise<ICorpusPage[]> {
+interface ISkillListing {
+  name: string;
+  url: string;
+}
+
+// index.json is the published skills catalogue: `{ skills: [{ name, files }] }`.
+// Each skill's SKILL.md sits next to it at `<name>/SKILL.md`. Names are checked as
+// slugs before they become a path, so a listing can never point outside the skills
+// directory or off the docs host.
+function parseSkillsIndex(text: string, indexUrl: string): ISkillListing[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`[corpus] ${indexUrl} is not valid JSON`);
+  }
+  const skills = (parsed as { skills?: unknown } | null)?.skills;
+  if (!Array.isArray(skills) || skills.length === 0) throw new Error(`[corpus] ${indexUrl} lists no skills`);
+
+  const seen = new Set<string>();
+  return skills.map((entry: { name?: unknown; files?: unknown } | null) => {
+    const name = entry?.name;
+    if (typeof name !== 'string' || !SKILL_NAME.test(name))
+      throw new Error(`[corpus] ${indexUrl} lists a skill with an invalid name: ${JSON.stringify(name)}`);
+    if (seen.has(name)) throw new Error(`[corpus] ${indexUrl} lists ${name} twice`);
+    seen.add(name);
+    if (!Array.isArray(entry?.files) || !entry.files.includes(SKILL_FILE))
+      throw new Error(`[corpus] ${indexUrl} lists ${name} without a ${SKILL_FILE}`);
+    return { name, url: new URL(`${name}/${SKILL_FILE}`, indexUrl).toString() };
+  });
+}
+
+// A SKILL.md opens with YAML frontmatter between `---` lines (`name`, `description`,
+// `metadata.version`), then the markdown body. The frontmatter is for skill loaders,
+// so only the body is indexed. The frontmatter `name` must be the listed name, or
+// the catalogue and the file disagree about which skill this is.
+function parseSkillFile(text: string, skill: ISkillListing): ICorpusPage {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const end = lines[0]?.trim() === '---' ? lines.findIndex((line, i) => i > 0 && line.trim() === '---') : -1;
+  if (end < 0) throw new Error(`[corpus] ${skill.url} has no frontmatter`);
+
+  const declared = lines
+    .slice(1, end)
+    .map((line) => line.match(/^name:\s*(["']?)(.+?)\1\s*$/))
+    .find(Boolean)?.[2];
+  if (declared !== skill.name) throw new Error(`[corpus] ${skill.url} does not name ${skill.name} (frontmatter name: ${declared ?? 'missing'})`);
+
+  const content = lines
+    .slice(end + 1)
+    .join('\n')
+    .trim();
+  if (!content) throw new Error(`[corpus] ${skill.url} has no content after its frontmatter`);
+
+  return { title: skillTitle(skill.name), url: skill.url, section: SKILLS_SECTION, sectionDescription: '', entryDescription: '', content };
+}
+
+// glomo-payouts -> "Glomo payouts (agent skill)". The URL already identifies the skill exactly.
+function skillTitle(name: string): string {
+  const topic = name.replace(/^glomo-/, '').replace(/-/g, ' ');
+  return `Glomo ${topic} (agent skill)`;
+}
+
+async function buildSkillPages(indexUrl: string): Promise<ICorpusPage[]> {
+  const skills = parseSkillsIndex(await fetchDocs(indexUrl, JSON_CONTENT), indexUrl);
+  return Promise.all(skills.map(async (skill) => parseSkillFile(await fetchDocs(skill.url), skill)));
+}
+
+// The docs pages are checked against llms.txt on their own. The skills are added
+// after that check as their own pages, so they never count towards it.
+export async function buildCorpus(
+  fullUrl: string = LLMS_FULL_URL,
+  indexUrl: string = LLMS_INDEX_URL,
+  skillsIndexUrl: string = SKILLS_INDEX_URL,
+): Promise<ICorpusPage[]> {
   if (!isDocsUrl(fullUrl)) throw new Error(`[corpus] refusing non-docs llms-full.txt URL: ${fullUrl}`);
   if (!isDocsUrl(indexUrl)) throw new Error(`[corpus] refusing non-docs llms.txt URL: ${indexUrl}`);
+  if (!isDocsUrl(skillsIndexUrl)) throw new Error(`[corpus] refusing non-docs skills index URL: ${skillsIndexUrl}`);
 
   const [full, index] = await Promise.all([fetchDocs(fullUrl), fetchDocs(indexUrl)]);
   const pages = parseLlmsFull(full);
   assertCorpusMatchesIndex(pages, parseLlmsIndex(index));
   if (pages.length === 0) throw new Error('[corpus] no documentation pages parsed from llms-full.txt');
 
-  return pages;
+  return [...pages, ...(await buildSkillPages(skillsIndexUrl))];
 }

@@ -46,6 +46,16 @@ spec doesn't have; if the page can't be parsed at runtime, the planner reports
 `not_available`. None of the discovery tools need a credential — they run
 unauthenticated (see below).
 
+`glomo_docs_search` searches the docs pages listed in `https://docs.glomo.one/llms.txt`
+(full text from `llms-full.txt`) and the published Glomo agent skills listed in
+`https://docs.glomo.one/.well-known/skills/index.json`. Each skill is indexed as its own
+page under the "Skills" section, titled with the skill name and cited with its
+published `SKILL.md` URL; its YAML frontmatter is not indexed. Both are fetched at
+build time from docs.glomo.one only. The build fails if the docs pages don't match
+`llms.txt`, if the skills index is unreachable or empty, or if a listed skill's
+`SKILL.md` is missing or names a different skill. The skills are not part of the
+`llms.txt` check.
+
 Both execution tools take an `operationId` (from the OpenAPI spec, e.g.
 `createCustomer`) and a flat `params` object. The dispatcher resolves the
 operation against the spec, enforces the allowlist, splits `params` into path /

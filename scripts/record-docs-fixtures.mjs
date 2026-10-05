@@ -1,6 +1,7 @@
-// Dev tool: records a real subset of docs.glomo.one/llms-full.txt into a nock.back
+// Dev tool: records a real subset of docs.glomo.one/llms-full.txt, plus the whole
+// published skills catalogue (index.json and every listed SKILL.md), into a nock.back
 // cassette so the docs_search tests run against real content (replayed in lockdown,
-// no network in CI). Re-run manually when the sample pages change:
+// no network in CI). Re-run manually when the sample pages or the skills change:
 //   node scripts/record-docs-fixtures.mjs
 
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -9,6 +10,7 @@ import path from 'node:path';
 const ORIGIN = 'https://docs.glomo.one';
 const LLMS_FULL = `${ORIGIN}/llms-full.txt`;
 const LLMS_INDEX = `${ORIGIN}/llms.txt`;
+const SKILLS_INDEX = `${ORIGIN}/.well-known/skills/index.json`;
 const KEEP = [
   `${ORIGIN}/get-started`,
   `${ORIGIN}/payin`,
@@ -63,10 +65,10 @@ function subsetIndex(text) {
 async function fetchText(url) {
   const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
   if (!response.ok) throw new Error(`failed to fetch ${url}: ${response.status}`);
-  return response.text();
+  return { text: await response.text(), contentType: response.headers.get('content-type') ?? '' };
 }
 
-function def(pathname, response) {
+function def(pathname, response, contentType = 'text/plain; charset=utf-8') {
   return {
     scope: `${ORIGIN}:443`,
     method: 'GET',
@@ -74,14 +76,29 @@ function def(pathname, response) {
     body: '',
     status: 200,
     response,
-    rawHeaders: { 'content-type': 'text/plain; charset=utf-8' },
+    rawHeaders: { 'content-type': contentType },
     responseIsBinary: false,
   };
 }
 
+// Record the skills catalogue verbatim: the index as served, then each listed
+// skill's SKILL.md, resolved the same way the corpus builder resolves it.
+async function skillDefs() {
+  const index = await fetchText(SKILLS_INDEX);
+  const { skills } = JSON.parse(index.text);
+  const files = await Promise.all(
+    skills.map(async ({ name }) => {
+      const url = new URL(`${name}/SKILL.md`, SKILLS_INDEX);
+      const file = await fetchText(url.toString());
+      return def(url.pathname, file.text, file.contentType);
+    }),
+  );
+  return [def(new URL(SKILLS_INDEX).pathname, index.text, index.contentType), ...files];
+}
+
 async function main() {
-  const [full, index] = await Promise.all([fetchText(LLMS_FULL), fetchText(LLMS_INDEX)]);
-  const defs = [def('/llms-full.txt', subset(full)), def('/llms.txt', subsetIndex(index))];
+  const [full, index, skills] = await Promise.all([fetchText(LLMS_FULL), fetchText(LLMS_INDEX), skillDefs()]);
+  const defs = [def('/llms-full.txt', subset(full.text)), def('/llms.txt', subsetIndex(index.text)), ...skills];
 
   await mkdir(path.dirname(OUT), { recursive: true });
   await writeFile(OUT, JSON.stringify(defs, null, 2));
