@@ -75,6 +75,14 @@ The server runs as a **stateless Streamable HTTP** service. The MCP route is
 `GET /healthz` answers `200 {"status":"ok"}` for the host's health check; it
 touches neither the docs corpus nor the API.
 
+`GET /mcp/server-card` serves the server's
+[SEP-2127](https://modelcontextprotocol.io/seps/2127-mcp-server-cards) MCP Server
+Card (`application/mcp-server-card+json`, open CORS, cached for an hour) for
+pre-connection discovery. It needs no credential and sits behind the flood
+guard. The card is built from the same `serverInfo` version and SDK protocol
+versions that `initialize` returns, so bumping `MCPServer.SERVER_VERSION` updates
+both.
+
 Every request the server turns away gets a JSON-RPC error with no `id`, the
 shape the MCP SDK uses for its own transport errors, and never a stack trace or
 file path:

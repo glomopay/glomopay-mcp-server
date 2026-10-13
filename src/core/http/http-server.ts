@@ -2,7 +2,7 @@ import express, { Express, RequestHandler } from 'express';
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
-import { MCPServer } from '@/core/mcp-server/mcp-server.module';
+import { buildServerCard, MCPServer, SERVER_CARD_MEDIA_TYPE } from '@/core/mcp-server/mcp-server.module';
 import type { IHttpMetrics } from '@/core/telemetry/telemetry.module';
 import { apiKeyAuthMiddleware, type CredentialVerifier } from '@/features/auth/auth.module';
 
@@ -28,6 +28,16 @@ const health: RequestHandler = (_req, res) => {
   res.set('Cache-Control', 'no-store').json({ status: 'ok' });
 };
 
+/** Serialised once: the card only changes with a deploy. */
+const SERVER_CARD_BODY = JSON.stringify(buildServerCard());
+
+/** Open CORS, as SEP-2127 allows for cards: a browser-based client discovers the server before it has any credential. */
+const serverCard: RequestHandler = (_req, res) => {
+  res
+    .set({ 'Content-Type': SERVER_CARD_MEDIA_TYPE, 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' })
+    .send(SERVER_CARD_BODY);
+};
+
 export function createHttpServer(mcpServer: MCPServer, options: IHttpServerOptions): Express {
   const reject = createRejecter(options.metrics);
   const app = express();
@@ -39,6 +49,9 @@ export function createHttpServer(mcpServer: MCPServer, options: IHttpServerOptio
 
   if (options.clientIpDiagnostic) app.use('/mcp', clientIpDiagnostic(options.trustProxyHops));
   app.use('/mcp', floodRateLimit(options.rateLimit, reject));
+
+  // Pre-connection discovery (SEP-2127): no auth, but behind the flood guard like everything under /mcp.
+  app.get('/mcp/server-card', serverCard);
 
   app.post(
     '/mcp',
